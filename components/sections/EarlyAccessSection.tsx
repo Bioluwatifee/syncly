@@ -26,7 +26,7 @@ export default function EarlyAccessSection() {
 
         {/* Sub */}
         <p style={{ color: "var(--muted)", fontSize: 16, lineHeight: 1.7, maxWidth: 420, margin: "0 auto 44px", position: "relative", fontWeight: 300 }}>
-          We&apos;re putting the final touches on Tuneshift. Drop your details and you&apos;ll be first in line — no spam, just the launch email.
+          We&apos;re putting the final touches on Syncly. Drop your details and you&apos;ll be first in line — no spam, just the launch email.
         </p>
 
         {/* CTA */}

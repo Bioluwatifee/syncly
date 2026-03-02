@@ -10,7 +10,7 @@ export default function Footer() {
       alignItems: "center",
     }}>
       <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700 }}>
-        Tuneshift
+        Syncly
       </div>
       <div style={{ fontSize: 13, color: "var(--muted)" }}>
         Built in public · Follow the journey on LinkedIn
