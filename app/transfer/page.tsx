@@ -69,6 +69,26 @@ export default function TransferPage() {
       }}>
         <div style={{ maxWidth: 740, margin: "0 auto" }}>
 
+          {/* ── Back arrow ── */}
+          <a
+            href="/"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              color: "#e8c547",
+              textDecoration: "none",
+              fontSize: 28,
+              marginBottom: 32,
+              lineHeight: 1,
+              transition: "transform 0.2s",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.transform = "translateX(-4px)")}
+            onMouseLeave={e => (e.currentTarget.style.transform = "translateX(0)")}
+            aria-label="Back to home"
+          >
+            ←
+          </a>
+
           {/* ── Page heading ── */}
           <div style={{ marginBottom: 40 }}>
             <h1 style={{
