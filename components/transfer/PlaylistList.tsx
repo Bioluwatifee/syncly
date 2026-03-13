@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { Platform } from "@/types";
 
 export interface PlaylistItem {
@@ -92,10 +91,9 @@ export default function PlaylistList({ platform, connected, playlists, selectedI
                   width: 52, height: 52, borderRadius: 8, flexShrink: 0,
                   overflow: "hidden",
                   background: "rgba(255,255,255,0.08)",
-                  position: "relative",
                 }}>
                   {pl.imageUrl ? (
-                    <Image src={pl.imageUrl} alt={pl.name} fill style={{ objectFit: "cover" }} />
+                    <img src={pl.imageUrl} alt={pl.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   ) : (
                     <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, #2a2a3a, #1a1a2a)" }} />
                   )}

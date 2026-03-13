@@ -39,11 +39,12 @@ interface SideProps {
   selected: Platform | null;
   connected: boolean;
   onSelect: (p: Platform) => void;
-  onConnect: () => void;
+  onConnect: () => Promise<void> | void;
 }
 
 function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideProps) {
   const [open, setOpen] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,123 +55,128 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  // Reset connecting state if platform changes
+  useEffect(() => { setConnecting(false); }, [selected]);
+
+  async function handleConnect() {
+    if (!selected || connected || connecting) return;
+    setConnecting(true);
+    await onConnect();
+    setConnecting(false);
+  }
+
   const selectedPlatform = PLATFORMS.find(p => p.id === selected);
   const isLeft = label === "From";
 
+  // ── Button appearance based on state ──────────────────────────────────────
+  // State 1 — no platform: grey, disabled
+  // State 2 — platform selected, not connected: brand color fill, "Connect"
+  // State 3 — connecting: brand color fill, spinner + "Connecting..."
+  // State 4 — connected: brand color bg tinted, "Connected ✓", disabled
+
+  const brandBg = selected === "spotify" ? "#1ed760"
+    : selected === "youtube" ? "#111"
+    : selected === "apple" ? "#fc3c44"
+    : "transparent";
+
+  const connectedBg = selected === "spotify" ? "rgba(30,215,96,0.15)"
+    : selected === "youtube" ? "rgba(255,68,68,0.15)"
+    : "rgba(252,60,68,0.15)";
+
+  const connectedColor = selected === "spotify" ? "#1ed760"
+    : selected === "youtube" ? "#ff4444"
+    : "#fc3c44";
+
+  const btnBg    = !selected ? "transparent" : connected ? connectedBg : brandBg;
+  const btnColor = !selected ? "rgba(255,255,255,0.35)"
+    : connected ? connectedColor
+    : selected === "youtube" ? "#fff" : "#000";
+  const btnLabel = connecting ? "Connecting..." : connected ? "Connected ✓" : "Connect";
+  const btnDisabled = !selected || connected || connecting;
+
   return (
     <div style={{ flex: 1, position: "relative" }} ref={ref}>
-      {/* Single unified input+button container — fixed height, no wrapping */}
+      {/* Unified input + button container */}
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
-          height: 52,
+          display: "flex", alignItems: "center", height: 52,
           background: "rgba(255,255,255,0.05)",
           border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 14,
-          overflow: "hidden",
-          transition: "border-color 0.2s",
-          userSelect: "none",
+          borderRadius: 14, overflow: "hidden",
+          transition: "border-color 0.2s", userSelect: "none",
         }}
         onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)")}
         onMouseLeave={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)")}
       >
-        {/* Clickable dropdown area — fills all space left of the button */}
+        {/* Dropdown trigger */}
         <div
-          onClick={() => setOpen(o => !o)}
+          onClick={() => !connected && setOpen(o => !o)}
           style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 14px",
-            height: "100%",
-            cursor: "pointer",
-            minWidth: 0,
+            flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "0 14px", height: "100%",
+            cursor: connected ? "default" : "pointer", minWidth: 0,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, overflow: "hidden" }}>
             {selectedPlatform ? (
               <>
                 <span style={{ flexShrink: 0 }}>{selectedPlatform.icon}</span>
-                <span style={{
-                  fontSize: 15, fontWeight: 600, color: "#fff",
-                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                }}>
+                <span style={{ fontSize: 15, fontWeight: 600, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {selectedPlatform.label}
                 </span>
               </>
             ) : (
-              <span style={{
-                fontSize: 14, color: "rgba(255,255,255,0.35)",
-                whiteSpace: "nowrap",
-              }}>
+              <span style={{ fontSize: 14, color: "rgba(255,255,255,0.35)", whiteSpace: "nowrap" }}>
                 Select platform...
               </span>
             )}
           </div>
-          {/* Chevron */}
-          <svg style={{ flexShrink: 0, marginLeft: 8 }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="2">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
+          {!connected && (
+            <svg style={{ flexShrink: 0, marginLeft: 8 }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="2">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          )}
         </div>
 
         {/* Vertical divider */}
         <div style={{ width: 1, height: 28, background: "rgba(255,255,255,0.1)", flexShrink: 0 }} />
 
-        {/* Connect button — filled brand color when platform selected, grey outline when not */}
+        {/* Connect button */}
         <button
-          onClick={onConnect}
-          disabled={!selected}
+          onClick={handleConnect}
+          disabled={btnDisabled}
           style={{
-            height: "100%",
-            padding: "0 20px",
-            border: "none",
-            background: selected
-              ? connected
-                ? (selected === "spotify" ? "#1ed760" : selected === "youtube" ? "#111" : "#fc3c44")
-                : (selected === "spotify" ? "#1ed760" : selected === "youtube" ? "#111" : "#fc3c44")
-              : "transparent",
-            color: selected
-              ? (selected === "youtube" ? "#fff" : "#000")
-              : "rgba(255,255,255,0.35)",
-            fontFamily: "'DM Sans', sans-serif",
-            fontWeight: 700,
-            fontSize: 14,
-            cursor: selected ? "pointer" : "not-allowed",
-            transition: "background 0.25s, color 0.25s, opacity 0.2s",
-            whiteSpace: "nowrap",
-            flexShrink: 0,
+            height: "100%", padding: "0 18px", border: "none",
+            background: btnBg, color: btnColor,
+            fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14,
+            cursor: btnDisabled ? "default" : "pointer",
+            opacity: !selected ? 0.4 : 1,
+            transition: "background 0.25s, color 0.25s",
+            whiteSpace: "nowrap", flexShrink: 0,
             borderRadius: "0 13px 13px 0",
-            opacity: selected ? 1 : 0.4,
+            display: "flex", alignItems: "center", gap: 7,
           }}
-          onMouseEnter={e => {
-            if (selected && !connected) {
-              (e.currentTarget as HTMLElement).style.filter = "brightness(1.1)";
-            }
-          }}
-          onMouseLeave={e => {
-            (e.currentTarget as HTMLElement).style.filter = "none";
-          }}
+          onMouseEnter={e => { if (selected && !connected && !connecting) (e.currentTarget as HTMLElement).style.filter = "brightness(1.1)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.filter = "none"; }}
         >
-          {connected ? "Connected ✓" : "Connect"}
+          {connecting && (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+              style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }}>
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          )}
+          {btnLabel}
         </button>
       </div>
 
       {/* Dropdown menu */}
       {open && (
         <div style={{
-          position: "absolute",
-          top: "calc(100% + 8px)",
-          left: isLeft ? 0 : "auto",
-          right: isLeft ? "auto" : 0,
-          width: "100%",
-          minWidth: 240,
-          background: "#222228",
-          border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 16,
-          overflow: "hidden",
-          zIndex: 50,
+          position: "absolute", top: "calc(100% + 8px)",
+          left: isLeft ? 0 : "auto", right: isLeft ? "auto" : 0,
+          width: "100%", minWidth: 240,
+          background: "#222228", border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: 16, overflow: "hidden", zIndex: 50,
           boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
         }}>
           {PLATFORMS.map(p => (
@@ -181,8 +187,7 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
                 display: "flex", alignItems: "center", justifyContent: "space-between",
                 padding: "14px 20px",
                 cursor: p.comingSoon ? "default" : "pointer",
-                transition: "background 0.15s",
-                opacity: p.comingSoon ? 0.5 : 1,
+                transition: "background 0.15s", opacity: p.comingSoon ? 0.5 : 1,
               }}
               onMouseEnter={e => { if (!p.comingSoon) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.06)"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
@@ -198,6 +203,9 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
           ))}
         </div>
       )}
+
+      {/* Spinner keyframe */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
@@ -209,8 +217,8 @@ interface Props {
   toConnected: boolean;
   onFromSelect: (p: Platform) => void;
   onToSelect: (p: Platform) => void;
-  onFromConnect: () => void;
-  onToConnect: () => void;
+  onFromConnect: () => Promise<void> | void;
+  onToConnect: () => Promise<void> | void;
 }
 
 export default function PlatformSelector({
