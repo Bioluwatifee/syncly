@@ -9,7 +9,7 @@ export default function Footer() {
       justifyContent: "space-between",
       alignItems: "center",
     }}>
-      <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700 }}>
+      <div style={{ fontFamily: "'Aleo', serif", fontSize: 18, fontWeight: 700 }}>
         Syncly
       </div>
       <div style={{ fontSize: 13, color: "var(--muted)" }}>

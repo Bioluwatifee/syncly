@@ -13,7 +13,7 @@ export default function DemoSection() {
       <div style={{ fontSize: 12, color: "var(--accent)", letterSpacing: 2, textTransform: "uppercase", fontWeight: 500, marginBottom: 16 }}>
         The transfer experience
       </div>
-      <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(36px, 4vw, 56px)", fontWeight: 700, letterSpacing: -1.5, lineHeight: 1.1, marginBottom: 16 }}>
+      <h2 style={{ fontFamily: "'Aleo', serif", fontSize: "clamp(36px, 4vw, 56px)", fontWeight: 700, letterSpacing: -1.5, lineHeight: 1.1, marginBottom: 16 }}>
         Built for music lovers,<br />not for engineers.
       </h2>
       <p style={{ color: "var(--muted)", fontSize: 16, lineHeight: 1.65, maxWidth: 480, marginBottom: 60 }}>

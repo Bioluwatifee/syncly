@@ -19,7 +19,7 @@ export default function EarlyAccessSection() {
         </div>
 
         {/* Headline */}
-        <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(38px, 5vw, 66px)", fontWeight: 700, letterSpacing: -2, lineHeight: 1.05, marginBottom: 20, position: "relative" }}>
+        <h2 style={{ fontFamily: "'Aleo', serif", fontSize: "clamp(38px, 5vw, 66px)", fontWeight: 700, letterSpacing: -2, lineHeight: 1.05, marginBottom: 20, position: "relative" }}>
           Be the first to know<br />
           <em style={{ fontStyle: "italic", color: "var(--accent)" }}>when we launch.</em>
         </h2>

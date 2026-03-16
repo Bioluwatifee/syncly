@@ -29,7 +29,7 @@ export default function Navbar() {
       }}
     >
       {/* Logo */}
-      <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, letterSpacing: "-0.5px", display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ fontFamily: "'Aleo', serif", fontSize: 22, fontWeight: 700, letterSpacing: "-0.5px", display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ width: 8, height: 8, background: "var(--accent)", borderRadius: "50%", animation: "pulse 2s ease-in-out infinite" }} />
         Syncly
       </div>

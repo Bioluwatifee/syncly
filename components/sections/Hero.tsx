@@ -43,12 +43,12 @@ export default function Hero() {
         marginBottom: 32, animation: "fadeUp 0.8s ease both",
       }}>
         <div style={{ width: 6, height: 6, background: "var(--accent)", borderRadius: "50%", animation: "pulse 2s ease-in-out infinite" }} />
-        Coming Soon
+        Building in public
       </div>
 
       {/* Headline */}
       <h1 style={{
-        fontFamily: "'Playfair Display', serif",
+        fontFamily: "'Aleo', serif",
         fontSize: "clamp(52px, 7vw, 96px)",
         fontWeight: 700, lineHeight: 1.0,
         letterSpacing: -3, maxWidth: 800,

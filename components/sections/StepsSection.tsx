@@ -32,7 +32,7 @@ export default function StepsSection() {
       <div style={{ fontSize: 12, color: "var(--accent)", letterSpacing: 2, textTransform: "uppercase", fontWeight: 500, marginBottom: 16 }}>
         How it works
       </div>
-      <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(36px, 4vw, 56px)", fontWeight: 700, letterSpacing: -1.5, lineHeight: 1.1 }}>
+      <h2 style={{ fontFamily: "'Aleo', serif", fontSize: "clamp(36px, 4vw, 56px)", fontWeight: 700, letterSpacing: -1.5, lineHeight: 1.1 }}>
         Three steps.<br />That&apos;s genuinely it.
       </h2>
 
@@ -51,9 +51,9 @@ export default function StepsSection() {
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(232,197,71,0.25)"; (e.currentTarget as HTMLElement).style.transform = "translateY(-4px)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.07)"; (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; }}
           >
-            <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 64, fontWeight: 700, color: "rgba(255,255,255,0.04)", position: "absolute", top: 16, right: 24, lineHeight: 1, pointerEvents: "none" }}>{s.n}</span>
+            <span style={{ fontFamily: "'Aleo', serif", fontSize: 64, fontWeight: 700, color: "rgba(255,255,255,0.04)", position: "absolute", top: 16, right: 24, lineHeight: 1, pointerEvents: "none" }}>{s.n}</span>
             <div style={{ width: 44, height: 44, background: "rgba(232,197,71,0.08)", border: "1px solid rgba(232,197,71,0.2)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, marginBottom: 20 }}>{s.icon}</div>
-            <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, letterSpacing: -0.5, marginBottom: 10 }}>{s.title}</h3>
+            <h3 style={{ fontFamily: "'Aleo', serif", fontSize: 22, fontWeight: 700, letterSpacing: -0.5, marginBottom: 10 }}>{s.title}</h3>
             <p style={{ color: "var(--muted)", fontSize: 14, lineHeight: 1.65 }}>{s.body}</p>
           </div>
         ))}
