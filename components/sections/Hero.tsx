@@ -59,7 +59,7 @@ export default function Hero() {
       </h1>
 
       {/* Subtext */}
-      <p style={{
+      <p className="hero-sub" style={{
         fontSize: 18, color: "var(--muted)", maxWidth: 480,
         lineHeight: 1.65, marginBottom: 48, fontWeight: 300,
         animation: "fadeUp 0.8s 0.2s ease both",
@@ -68,11 +68,12 @@ export default function Hero() {
       </p>
 
       {/* Actions */}
-      <div style={{ display: "flex", gap: 16, alignItems: "center", animation: "fadeUp 0.8s 0.3s ease both" }}>
+      <div className="hero-actions" style={{ display: "flex", gap: 16, alignItems: "center", animation: "fadeUp 0.8s 0.3s ease both" }}>
         <a
           href="https://tally.so/r/442xBY"
           target="_blank"
           rel="noopener noreferrer"
+          className="btn-primary"
           style={{
             background: "var(--accent)", color: "#0a0a0b",
             fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 16,
@@ -87,13 +88,14 @@ export default function Hero() {
         </a>
         <button
           onClick={() => document.getElementById("how")?.scrollIntoView({ behavior: "smooth" })}
+          className="btn-ghost"
           style={{
-          background: "transparent", color: "var(--muted)",
-          fontFamily: "'DM Sans', sans-serif", fontWeight: 400, fontSize: 15,
-          padding: "16px 24px", borderRadius: 100,
-          border: "1px solid rgba(255,255,255,0.07)", cursor: "none",
-          transition: "color 0.2s, border-color 0.2s",
-        }}
+            background: "transparent", color: "var(--muted)",
+            fontFamily: "'DM Sans', sans-serif", fontWeight: 400, fontSize: 15,
+            padding: "16px 24px", borderRadius: 100,
+            border: "1px solid rgba(255,255,255,0.07)", cursor: "pointer",
+            transition: "color 0.2s, border-color 0.2s",
+          }}
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--text)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.15)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--muted)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.07)"; }}
         >

@@ -1,0 +1,347 @@
+/*
+  mobile.css — Syncly landing page mobile styles
+  Add @import or paste into globals.css / app/globals.css
+  Covers: 768px (tablet) and 375px (mobile) breakpoints
+  All rules are additive — no desktop styles broken
+*/
+
+/* ─── Base: prevent horizontal scroll everywhere ─────────────────────────── */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* Disable custom cursor on touch devices */
+@media (hover: none) {
+  .cursor,
+  .cursor-ring {
+    display: none !important;
+  }
+  body {
+    cursor: auto !important;
+  }
+  button, a {
+    cursor: pointer !important;
+  }
+}
+
+/* ─── Navigation ─────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  nav {
+    padding: 18px 20px !important;
+  }
+
+  /* Hide desktop nav links and CTA */
+  .nav-links {
+    display: none !important;
+  }
+
+  /* Hide desktop CTA — hamburger takes over */
+  .nav-cta {
+    display: none !important;
+  }
+
+  /* Show hamburger button */
+  .hamburger {
+    display: flex !important;
+  }
+}
+
+/* ─── Hero ───────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .hero {
+    padding: 110px 24px 64px !important;
+    min-height: 100svh;
+  }
+
+  .vinyl-container {
+    display: none !important;
+  }
+
+  /* Tighten orbs so they don't cause horizontal scroll */
+  .orb-1 {
+    width: 320px !important;
+    height: 320px !important;
+    top: -100px !important;
+    left: -120px !important;
+  }
+  .orb-2 {
+    width: 240px !important;
+    height: 240px !important;
+    bottom: -80px !important;
+    right: -80px !important;
+  }
+  .orb-3 {
+    display: none !important;
+  }
+
+  /* Badge */
+  .hero-badge {
+    font-size: 11px !important;
+    padding: 5px 14px !important;
+    margin-bottom: 24px !important;
+  }
+
+  /* H1 */
+  h1 {
+    font-size: clamp(38px, 10vw, 56px) !important;
+    letter-spacing: -2px !important;
+    margin-bottom: 18px !important;
+    line-height: 1.05 !important;
+  }
+
+  /* Subtitle */
+  .hero-sub {
+    font-size: 16px !important;
+    margin-bottom: 36px !important;
+    max-width: 100% !important;
+  }
+
+  /* CTA buttons — stack vertically, full width */
+  .hero-actions {
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: 400px !important;
+    gap: 10px !important;
+  }
+
+  .btn-primary,
+  .btn-ghost {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    display: block !important;
+    text-align: center !important;
+    font-size: 15px !important;
+    padding: 15px 24px !important;
+    border-radius: 100px !important;
+    white-space: nowrap !important;
+  }
+
+  /* Platform pills */
+  .platforms-row {
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 10px !important;
+    margin-top: 40px !important;
+  }
+
+  .platforms-label {
+    margin-right: 0 !important;
+    margin-bottom: 2px !important;
+  }
+
+  .platforms-pills {
+    gap: 8px !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+  }
+
+  .platform-pill {
+    font-size: 12px !important;
+    padding: 7px 14px !important;
+  }
+}
+
+/* ─── Demo / transfer card section ──────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* DemoSection outer wrapper */
+  .demo-section {
+    padding: 64px 20px 48px !important;
+    max-width: 100% !important;
+  }
+
+  .section-title {
+    font-size: clamp(28px, 7vw, 40px) !important;
+    letter-spacing: -1px !important;
+  }
+
+  .section-sub {
+    font-size: 15px !important;
+    margin-bottom: 40px !important;
+    max-width: 100% !important;
+  }
+
+  /* Transfer card inner */
+  .transfer-card {
+    padding: 24px 16px !important;
+    border-radius: 18px !important;
+  }
+
+  /* Old demo card platform boxes */
+  .platforms-transfer {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+
+  .transfer-arrow {
+    flex-direction: row !important;
+    justify-content: center !important;
+    padding: 2px 0 !important;
+  }
+
+  .arrow-line {
+    width: 40px !important;
+  }
+
+  .platform-box {
+    width: 100% !important;
+  }
+}
+
+/* ─── Steps section ──────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .steps-section {
+    padding: 56px 20px 72px !important;
+    max-width: 100% !important;
+  }
+
+  .steps-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+    margin-top: 40px !important;
+  }
+
+  .step-card {
+    padding: 24px !important;
+    border-radius: 16px !important;
+  }
+
+  .step-card h3 {
+    font-size: 18px !important;
+  }
+}
+
+/* ─── Stats row ──────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .stats-row {
+    flex-direction: column !important;
+    margin: 0 20px 72px !important;
+    gap: 0 !important;
+    border-radius: 16px !important;
+  }
+
+  .stat-item {
+    padding: 28px 20px !important;
+  }
+
+  .stat-value {
+    font-size: 36px !important;
+    letter-spacing: -1.5px !important;
+  }
+}
+
+/* ─── Early access section ───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .early-access-section {
+    padding: 0 16px 72px !important;
+  }
+
+  .early-access-inner {
+    padding: 56px 24px 52px !important;
+    border-radius: 24px !important;
+  }
+
+  .ea-title {
+    font-size: clamp(22px, 6vw, 32px) !important;
+    letter-spacing: -1px !important;
+    line-height: 1.1 !important;
+  }
+
+  .ea-sub {
+    font-size: 15px !important;
+    margin-bottom: 32px !important;
+  }
+
+  .ea-btn {
+    display: block !important;
+    width: 100% !important;
+    max-width: 360px !important;
+    box-sizing: border-box !important;
+    text-align: center !important;
+    padding: 16px 24px !important;
+    font-size: 15px !important;
+    white-space: nowrap !important;
+  }
+}
+
+/* ─── CTA section ────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .cta-section {
+    margin: 0 16px 72px !important;
+    padding: 48px 24px !important;
+    border-radius: 24px !important;
+  }
+
+  .cta-section h2 {
+    font-size: clamp(28px, 7vw, 42px) !important;
+    letter-spacing: -1px !important;
+  }
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  footer {
+    padding: 32px 20px !important;
+    flex-direction: column !important;
+    gap: 14px !important;
+    text-align: center !important;
+  }
+
+  .footer-links {
+    gap: 20px !important;
+  }
+}
+
+/* ─── Extra small: 375px ─────────────────────────────────────────────────── */
+@media (max-width: 390px) {
+  h1 {
+    font-size: 36px !important;
+    letter-spacing: -1.5px !important;
+  }
+
+  .hero {
+    padding: 100px 16px 56px !important;
+  }
+
+  .hero-sub {
+    font-size: 15px !important;
+  }
+
+  .hero-badge {
+    font-size: 10px !important;
+    letter-spacing: 0.8px !important;
+  }
+
+  .platform-pill {
+    font-size: 11px !important;
+    padding: 6px 12px !important;
+  }
+
+  .btn-primary,
+  .btn-ghost {
+    font-size: 14px !important;
+    padding: 14px 20px !important;
+  }
+
+  .early-access-inner {
+    padding: 44px 18px 44px !important;
+  }
+
+  .ea-title {
+    font-size: 22px !important;
+    letter-spacing: -0.5px !important;
+  }
+
+  .steps-section {
+    padding: 48px 16px 56px !important;
+  }
+
+  .step-card {
+    padding: 20px !important;
+  }
+
+  nav {
+    padding: 16px !important;
+  }
+}

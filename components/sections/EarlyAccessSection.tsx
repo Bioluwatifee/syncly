@@ -2,8 +2,8 @@
 
 export default function EarlyAccessSection() {
   return (
-    <section style={{ padding: "0 60px 100px" }}>
-      <div style={{
+    <section className="early-access-section" style={{ padding: "0 60px 100px" }}>
+      <div className="early-access-inner" style={{
         background: "var(--surface)",
         border: "1px solid rgba(232,197,71,0.18)",
         borderRadius: 32, padding: "90px 60px",
@@ -19,13 +19,13 @@ export default function EarlyAccessSection() {
         </div>
 
         {/* Headline */}
-        <h2 style={{ fontFamily: "'Aleo', serif", fontSize: "clamp(38px, 5vw, 66px)", fontWeight: 700, letterSpacing: -2, lineHeight: 1.05, marginBottom: 20, position: "relative" }}>
+        <h2 className="ea-title" style={{ fontFamily: "'Aleo', serif", fontSize: "clamp(38px, 5vw, 66px)", fontWeight: 700, letterSpacing: -2, lineHeight: 1.05, marginBottom: 20, position: "relative" }}>
           Be the first to know<br />
           <em style={{ fontStyle: "italic", color: "var(--accent)" }}>when we launch.</em>
         </h2>
 
         {/* Sub */}
-        <p style={{ color: "var(--muted)", fontSize: 16, lineHeight: 1.7, maxWidth: 420, margin: "0 auto 44px", position: "relative", fontWeight: 300 }}>
+        <p className="ea-sub" style={{ color: "var(--muted)", fontSize: 16, lineHeight: 1.7, maxWidth: 420, margin: "0 auto 44px", position: "relative", fontWeight: 300 }}>
           We&apos;re putting the final touches on Syncly. Drop your details and you&apos;ll be first in line — no spam, just the launch email.
         </p>
 
@@ -34,6 +34,7 @@ export default function EarlyAccessSection() {
           href="https://tally.so/r/442xBY"
           target="_blank"
           rel="noopener noreferrer"
+          className="ea-btn"
           style={{
             display: "inline-flex", alignItems: "center", gap: 10,
             background: "var(--accent)", color: "#0a0a0b",
@@ -49,8 +50,6 @@ export default function EarlyAccessSection() {
           Get early access
           <span style={{ fontSize: 18 }}>→</span>
         </a>
-
-
 
         {/* Waveform */}
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 60, pointerEvents: "none" }} aria-hidden="true">

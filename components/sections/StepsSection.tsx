@@ -36,7 +36,7 @@ export default function StepsSection() {
         Three steps.<br />That&apos;s genuinely it.
       </h2>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24, marginTop: 60 }}>
+      <div className="steps-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24, marginTop: 60 }}>
         {steps.map((s, i) => (
           <div
             key={s.n}

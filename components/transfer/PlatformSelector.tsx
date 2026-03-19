@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { Platform } from "@/types";
 
 interface PlatformOption {
@@ -40,9 +40,10 @@ interface SideProps {
   connected: boolean;
   onSelect: (p: Platform) => void;
   onConnect: () => Promise<void> | void;
+  isMobile: boolean;
 }
 
-function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideProps) {
+function PlatformSide({ label, selected, connected, onSelect, onConnect, isMobile }: SideProps) {
   const [open, setOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -55,7 +56,6 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Reset connecting state if platform changes
   useEffect(() => { setConnecting(false); }, [selected]);
 
   async function handleConnect() {
@@ -66,13 +66,6 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
   }
 
   const selectedPlatform = PLATFORMS.find(p => p.id === selected);
-  const isLeft = label === "From";
-
-  // ── Button appearance based on state ──────────────────────────────────────
-  // State 1 — no platform: grey, disabled
-  // State 2 — platform selected, not connected: brand color fill, "Connect"
-  // State 3 — connecting: brand color fill, spinner + "Connecting..."
-  // State 4 — connected: brand color bg tinted, "Connected ✓", disabled
 
   const brandBg = selected === "spotify" ? "#1ed760"
     : selected === "youtube" ? "#111"
@@ -95,11 +88,18 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
   const btnDisabled = !selected || connected || connecting;
 
   return (
-    <div style={{ flex: 1, position: "relative" }} ref={ref}>
+    <div style={{ flex: 1, position: "relative", width: isMobile ? "100%" : undefined }} ref={ref}>
+      {/* From/To label — shown inline above input on mobile */}
+      {isMobile && (
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px", marginBottom: 8 }}>
+          {label}
+        </div>
+      )}
+
       {/* Unified input + button container */}
       <div
         style={{
-          display: "flex", alignItems: "center", height: 52,
+          display: "flex", alignItems: "center", height: isMobile ? 56 : 52,
           background: "rgba(255,255,255,0.05)",
           border: "1px solid rgba(255,255,255,0.1)",
           borderRadius: 14, overflow: "hidden",
@@ -146,7 +146,7 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
           onClick={handleConnect}
           disabled={btnDisabled}
           style={{
-            height: "100%", padding: "0 18px", border: "none",
+            height: "100%", padding: isMobile ? "0 16px" : "0 18px", border: "none",
             background: btnBg, color: btnColor,
             fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14,
             cursor: btnDisabled ? "default" : "pointer",
@@ -155,6 +155,7 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
             whiteSpace: "nowrap", flexShrink: 0,
             borderRadius: "0 13px 13px 0",
             display: "flex", alignItems: "center", gap: 7,
+            minWidth: isMobile ? 88 : undefined,
           }}
           onMouseEnter={e => { if (selected && !connected && !connecting) (e.currentTarget as HTMLElement).style.filter = "brightness(1.1)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.filter = "none"; }}
@@ -169,12 +170,11 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
         </button>
       </div>
 
-      {/* Dropdown menu */}
+      {/* Dropdown menu — full width */}
       {open && (
         <div style={{
           position: "absolute", top: "calc(100% + 8px)",
-          left: isLeft ? 0 : "auto", right: isLeft ? "auto" : 0,
-          width: "100%", minWidth: 240,
+          left: 0, right: 0,
           background: "#222228", border: "1px solid rgba(255,255,255,0.1)",
           borderRadius: 16, overflow: "hidden", zIndex: 50,
           boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
@@ -185,7 +185,7 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
               onClick={() => { if (!p.comingSoon) { onSelect(p.id); setOpen(false); } }}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: "14px 20px",
+                padding: isMobile ? "16px 20px" : "14px 20px",
                 cursor: p.comingSoon ? "default" : "pointer",
                 transition: "background 0.15s", opacity: p.comingSoon ? 0.5 : 1,
               }}
@@ -204,7 +204,6 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect }: SideP
         </div>
       )}
 
-      {/* Spinner keyframe */}
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
@@ -227,42 +226,76 @@ export default function PlatformSelector({
   onFromSelect, onToSelect,
   onFromConnect, onToConnect,
 }: Props) {
+  // useLayoutEffect fires synchronously before paint — eliminates the
+  // desktop→mobile flash that useEffect causes on narrow viewports.
+  const [isMobile, setIsMobile] = useState(false);
+
+  useLayoutEffect(() => {
+    const mq = window.matchMedia("(max-width: 600px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
   return (
     <div>
-      {/* Label row */}
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+      {/* CSS handles mobile layout — no JS timing dependency */}
+      <style>{`
+        .platform-selector-labels { display: flex; justify-content: space-between; margin-bottom: 14px; }
+        .platform-selector-row    { display: flex; flex-direction: row; align-items: center; gap: 16px; }
+        @media (max-width: 600px) {
+          .platform-selector-labels { display: none; }
+          .platform-selector-row    { flex-direction: column !important; align-items: stretch !important; width: 100% !important; }
+          .platform-selector-row > * { width: 100% !important; }
+        }
+      `}</style>
+
+      {/* From / To labels — hidden on mobile via CSS */}
+      <div className="platform-selector-labels">
         <span style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px" }}>From</span>
         <span style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px" }}>To</span>
       </div>
 
-      {/* Selectors row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      {/* Row on desktop, column on mobile — driven by CSS not JS */}
+      <div className="platform-selector-row">
         <PlatformSide
           label="From"
           selected={fromPlatform}
           connected={fromConnected}
           onSelect={onFromSelect}
           onConnect={onFromConnect}
+          isMobile={isMobile}
         />
 
-        {/* Swap icon — outlined circle */}
-        <div style={{
-          width: 40, height: 40, borderRadius: "50%",
-          border: "1.5px solid rgba(255,255,255,0.25)",
-          background: "transparent",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          flexShrink: 0, cursor: "pointer",
-          transition: "border-color 0.2s, transform 0.3s",
-        }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(232,197,71,0.6)"; (e.currentTarget as HTMLElement).style.transform = "rotate(180deg)"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.25)"; (e.currentTarget as HTMLElement).style.transform = "rotate(0deg)"; }}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 3L4 7l4 4" />
-            <path d="M4 7h16" />
-            <path d="M16 21l4-4-4-4" />
-            <path d="M20 17H4" />
-          </svg>
+        {/* Swap icon — rotates 90° on mobile to act as a down-arrow between rows */}
+        <div style={{ display: "flex", justifyContent: "center", flexShrink: 0 }}>
+          <div
+            style={{
+              width: 40, height: 40, borderRadius: "50%",
+              border: "1.5px solid rgba(255,255,255,0.25)",
+              background: "transparent",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer",
+              transition: "border-color 0.2s, transform 0.3s",
+              transform: isMobile ? "rotate(90deg)" : "rotate(0deg)",
+            }}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLElement).style.borderColor = "rgba(232,197,71,0.6)";
+              if (!isMobile) (e.currentTarget as HTMLElement).style.transform = "rotate(180deg)";
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.25)";
+              (e.currentTarget as HTMLElement).style.transform = isMobile ? "rotate(90deg)" : "rotate(0deg)";
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 3L4 7l4 4" />
+              <path d="M4 7h16" />
+              <path d="M16 21l4-4-4-4" />
+              <path d="M20 17H4" />
+            </svg>
+          </div>
         </div>
 
         <PlatformSide
@@ -271,6 +304,7 @@ export default function PlatformSelector({
           connected={toConnected}
           onSelect={onToSelect}
           onConnect={onToConnect}
+          isMobile={isMobile}
         />
       </div>
     </div>
