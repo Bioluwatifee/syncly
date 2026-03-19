@@ -345,3 +345,18 @@ html, body {
     padding: 16px !important;
   }
 }
+
+/* ─── Transfer page: platform selector mobile stacking ──────────────────── */
+@media (max-width: 600px) {
+  .platform-selector-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+  .platform-side {
+    flex: none !important;
+    width: 100% !important;
+  }
+  .swap-icon {
+    display: none !important;
+  }
+}
