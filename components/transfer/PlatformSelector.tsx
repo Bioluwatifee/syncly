@@ -88,7 +88,7 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, isMobil
   const btnDisabled = !selected || connected || connecting;
 
   return (
-    <div style={{ flex: 1, position: "relative", width: isMobile ? "100%" : undefined }} ref={ref}>
+    <div className="platform-side" style={{ position: "relative" }} ref={ref}>
       {/* From/To label — shown inline above input on mobile */}
       {isMobile && (
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px", marginBottom: 8 }}>
@@ -244,10 +244,12 @@ export default function PlatformSelector({
       <style>{`
         .platform-selector-labels { display: flex; justify-content: space-between; margin-bottom: 14px; }
         .platform-selector-row    { display: flex; flex-direction: row; align-items: center; gap: 16px; }
+        .platform-side            { flex: 1; }
         @media (max-width: 600px) {
           .platform-selector-labels { display: none; }
           .platform-selector-row    { flex-direction: column !important; align-items: stretch !important; width: 100% !important; }
           .platform-selector-row > * { width: 100% !important; }
+          .platform-side            { flex: none !important; width: 100% !important; }
         }
       `}</style>
 
