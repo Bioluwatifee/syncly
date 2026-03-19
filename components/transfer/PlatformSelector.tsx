@@ -231,7 +231,7 @@ export default function PlatformSelector({
   const [isMobile, setIsMobile] = useState(false);
 
   useLayoutEffect(() => {
-    const mq = window.matchMedia("(max-width: 600px)");
+    const mq = window.matchMedia("(max-width: 768px)");
     setIsMobile(mq.matches);
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener("change", handler);
