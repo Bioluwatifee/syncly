@@ -245,7 +245,7 @@ export default function PlatformSelector({
         .platform-selector-labels { display: flex; justify-content: space-between; margin-bottom: 14px; }
         .platform-selector-row    { display: flex; flex-direction: row; align-items: center; gap: 16px; }
         .platform-side            { flex: 1; }
-        @media (max-width: 600px) {
+        @media (max-width: 768px) {
           .platform-selector-labels { display: none; }
           .platform-selector-row    { flex-direction: column !important; align-items: stretch !important; width: 100% !important; }
           .platform-selector-row > * { width: 100% !important; }
