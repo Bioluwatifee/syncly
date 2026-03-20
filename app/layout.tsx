@@ -5,17 +5,23 @@ export const metadata: Metadata = {
   title: "Syncly — Move Your Music",
   description:
     "Move entire playlists between Spotify, Apple Music, and YouTube Music in seconds. No lost songs. No starting over.",
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/favicon.ico",
+  },
   openGraph: {
     title: "Syncly — Move Your Music",
     description:
       "Move entire playlists between Spotify, Apple Music, and YouTube Music in seconds.",
     type: "website",
     url: "https://syncly.app",
+    images: [{ url: "/favicon.ico" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Syncly — Move Your Music",
     description: "Move playlists between Spotify, Apple Music & YouTube Music.",
+    images: ["/favicon.ico"],
   },
 };
 

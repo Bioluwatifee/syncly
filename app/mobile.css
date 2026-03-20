@@ -5,6 +5,9 @@
   All rules are additive — no desktop styles broken
 */
 
+/* ─── Base ───────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
 /* ─── Base: prevent horizontal scroll everywhere ─────────────────────────── */
 html, body {
   overflow-x: hidden;
@@ -359,4 +362,25 @@ html, body {
   .swap-icon {
     display: none !important;
   }
+}
+
+/* ─── Transfer page: Transfer button full width on mobile ──────────────── */
+@media (max-width: 600px) {
+  .transfer-btn-wrapper { width: 100% !important; }
+  .transfer-btn-wrapper button { width: 100% !important; }
+}
+
+/* ─── Transfer page: card padding tighter on mobile ────────────────────── */
+@media (max-width: 600px) {
+  .transfer-card-inner { padding: 24px 20px 24px !important; }
+}
+
+/* ─── Transfer page: result state buttons stack on mobile ──────────────── */
+@media (max-width: 480px) {
+  .result-btn-row { flex-direction: column !important; }
+}
+
+/* ─── General: touch targets ───────────────────────────────────────────── */
+@media (max-width: 768px) {
+  button, a, [role="button"] { min-height: 44px; }
 }
