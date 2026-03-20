@@ -45,7 +45,7 @@ function StaticPlatformInput({ icon, label, connectedBg, connectedColor }: Stati
       display: "flex", alignItems: "center", height: 52,
       background: "rgba(255,255,255,0.05)",
       border: "1px solid rgba(255,255,255,0.1)",
-      borderRadius: 14, overflow: "hidden",
+      borderRadius: 14,
       userSelect: "none",
     }}>
       {/* Platform label */}
@@ -70,6 +70,7 @@ function StaticPlatformInput({ icon, label, connectedBg, connectedColor }: Stati
         whiteSpace: "nowrap", flexShrink: 0,
         borderRadius: "0 13px 13px 0",
         display: "flex", alignItems: "center",
+        overflow: "hidden",
       }}>
         Connected ✓
       </div>
