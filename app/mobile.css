@@ -404,3 +404,20 @@ html, body {
   .demo-platform-side   { flex: none !important; width: 100% !important; }
   .swap-icon-wrap       { align-self: center !important; }
 }
+
+/* ─── Transfer page: platform side fixes on mobile ─────────────────────── */
+@media (max-width: 600px) {
+  /* Show full platform name — enough space when stacked full-width */
+  .platform-side .platform-label-inner {
+    overflow: visible !important;
+    min-width: 0;
+  }
+  .platform-side .platform-label-inner span {
+    overflow: visible !important;
+    text-overflow: unset !important;
+  }
+  /* Rotate swap icon to point vertically */
+  .platform-selector-row .swap-icon-circle {
+    transform: rotate(90deg) !important;
+  }
+}

@@ -117,7 +117,7 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, isMobil
             cursor: connected ? "default" : "pointer", minWidth: 0,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, overflow: "hidden" }}>
+          <div className="platform-label-inner" style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, overflow: "hidden" }}>
             {selectedPlatform ? (
               <>
                 <span style={{ flexShrink: 0 }}>{selectedPlatform.icon}</span>
@@ -260,6 +260,7 @@ export default function PlatformSelector({
         {/* Swap icon — rotates 90° on mobile to act as a down-arrow between rows */}
         <div style={{ display: "flex", justifyContent: "center", flexShrink: 0 }}>
           <div
+            className="swap-icon-circle"
             style={{
               width: 40, height: 40, borderRadius: "50%",
               border: "1.5px solid rgba(255,255,255,0.25)",
