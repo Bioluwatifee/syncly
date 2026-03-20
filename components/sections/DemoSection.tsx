@@ -51,7 +51,7 @@ function StaticPlatformInput({ icon, label, connectedBg, connectedColor }: Stati
       {/* Platform label */}
       <div style={{
         flex: 1, display: "flex", alignItems: "center", gap: 10,
-        padding: "0 14px", height: "100%", minWidth: 0,
+        padding: "0 14px", height: "100%", minWidth: "fit-content",
       }}>
         <span style={{ flexShrink: 0 }}>{icon}</span>
         <span className="platform-label-text" style={{ fontSize: 15, fontWeight: 600, color: "#fff", whiteSpace: "nowrap" }}>
