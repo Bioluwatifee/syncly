@@ -231,7 +231,7 @@ export default function PlatformSelector({
   const [isMobile, setIsMobile] = useState(false);
 
   useLayoutEffect(() => {
-    const mq = window.matchMedia("(max-width: 768px)");
+    const mq = window.matchMedia("(max-width: 600px)");
     setIsMobile(mq.matches);
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener("change", handler);
@@ -240,19 +240,6 @@ export default function PlatformSelector({
 
   return (
     <div>
-      {/* CSS handles mobile layout — no JS timing dependency */}
-      <style>{`
-        .platform-selector-labels { display: flex; justify-content: space-between; margin-bottom: 14px; }
-        .platform-selector-row    { display: flex; flex-direction: row; align-items: center; gap: 16px; }
-        .platform-side            { flex: 1; }
-        @media (max-width: 768px) {
-          .platform-selector-labels { display: none; }
-          .platform-selector-row    { flex-direction: column !important; align-items: stretch !important; width: 100% !important; }
-          .platform-selector-row > * { width: 100% !important; }
-          .platform-side            { flex: none !important; width: 100% !important; }
-        }
-      `}</style>
-
       {/* From / To labels — hidden on mobile via CSS */}
       <div className="platform-selector-labels">
         <span style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px" }}>From</span>
