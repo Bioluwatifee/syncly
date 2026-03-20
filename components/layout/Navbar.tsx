@@ -49,7 +49,7 @@ export default function Navbar() {
           flexShrink: 0,
         }}>
           <img
-            src="/favicon-96x96.png"
+            src="/favicon-32x32.png"
             alt="Syncly"
             width={22}
             height={22}
@@ -221,6 +221,9 @@ export default function Navbar() {
         @media (max-width: 768px) {
           .syncly-nav {
             padding: 20px 20px !important;
+            background: rgba(10,10,11,0.95) !important;
+            backdrop-filter: blur(20px) !important;
+            border-bottom: 1px solid rgba(255,255,255,0.07) !important;
           }
           .nav-links-desktop {
             display: none !important;
