@@ -49,7 +49,7 @@ export default function Navbar() {
           flexShrink: 0,
         }}>
           <img
-            src="/favicon-32x32.png"
+            src="/favicon-96x96.png"
             alt="Syncly"
             width={22}
             height={22}

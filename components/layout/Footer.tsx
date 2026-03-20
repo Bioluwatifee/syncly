@@ -16,7 +16,7 @@ export default function Footer() {
         textDecoration: "none", flexShrink: 0,
       }}>
         <img
-          src="/favicon-32x32.png"
+          src="/favicon-96x96.png"
           alt="Syncly"
           width={20}
           height={20}
