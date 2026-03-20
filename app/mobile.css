@@ -396,3 +396,11 @@ html, body {
   .platform-selector-row > * { width: 100% !important; }
   .platform-side            { flex: none !important; width: 100% !important; }
 }
+
+/* ─── DemoSection: platform row stacks vertically on mobile ─────────────── */
+@media (max-width: 768px) {
+  .demo-platform-labels { display: none !important; }
+  .platform-row-inner   { flex-direction: column !important; align-items: stretch !important; gap: 12px !important; }
+  .demo-platform-side   { flex: none !important; width: 100% !important; }
+  .swap-icon-wrap       { align-self: center !important; }
+}

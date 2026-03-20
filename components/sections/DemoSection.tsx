@@ -40,7 +40,7 @@ interface StaticPlatformInputProps {
 
 function StaticPlatformInput({ icon, label, connectedBg, connectedColor }: StaticPlatformInputProps) {
   return (
-    <div style={{
+    <div className="demo-platform-side" style={{
       flex: 1,
       display: "flex", alignItems: "center", height: 52,
       background: "rgba(255,255,255,0.05)",
@@ -237,7 +237,7 @@ export default function DemoSection() {
         </h3>
 
         {/* From / To labels */}
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+        <div className="demo-platform-labels" style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
           <span style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px" }}>From</span>
           <span style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px" }}>To</span>
         </div>
