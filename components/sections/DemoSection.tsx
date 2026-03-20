@@ -174,9 +174,6 @@ export default function DemoSection() {
           .demo-section-tsx .demo-card {
             padding: 18px 12px 16px !important;
           }
-          .demo-section-tsx .platform-label-text {
-            display: none !important;
-          }
         }
       `}</style>
 
@@ -218,7 +215,6 @@ export default function DemoSection() {
         border: "1px solid rgba(255,255,255,0.06)",
         boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
         position: "relative",
-        overflow: "hidden",
       }}>
 
         {/* Gold top-edge shimmer — matches original transfer-card::before */}
