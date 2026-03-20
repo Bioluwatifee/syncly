@@ -421,3 +421,17 @@ html, body {
     transform: rotate(90deg) !important;
   }
 }
+
+/* ─── DemoSection: platform name + swap icon fixes on mobile ────────────── */
+@media (max-width: 768px) {
+  /* Show full platform name */
+  .platform-label-text {
+    overflow: visible !important;
+    text-overflow: unset !important;
+    display: inline !important;
+  }
+  /* Rotate swap icon to point vertically */
+  .swap-icon-wrap {
+    transform: rotate(90deg) !important;
+  }
+}
