@@ -48,13 +48,13 @@ export default function Navbar() {
           display: "flex", alignItems: "center", gap: 8,
           flexShrink: 0,
         }}>
-          <span style={{
-            width: 8, height: 8,
-            background: "#e8c547",
-            borderRadius: "50%",
-            display: "inline-block",
-            animation: "pulse 2s ease-in-out infinite",
-          }} />
+          <img
+            src="/favicon-32x32.png"
+            alt="Syncly"
+            width={22}
+            height={22}
+            style={{ display: "block", flexShrink: 0 }}
+          />
           Syncly
         </a>
 
