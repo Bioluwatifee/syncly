@@ -3,13 +3,22 @@
 import { useState, useEffect } from "react";
 
 export default function Navbar() {
-  const [scrolled, setScrolled]   = useState(false);
-  const [menuOpen, setMenuOpen]   = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40);
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
   }, []);
 
   // Lock body scroll when mobile menu is open
@@ -33,7 +42,9 @@ export default function Navbar() {
           top: 0, left: 0, right: 0,
           zIndex: 1000,
           borderBottom: scrolled ? "1px solid rgba(255,255,255,0.07)" : "1px solid transparent",
-          background: scrolled ? "rgba(10,10,11,0.92)" : "rgba(10,10,11,0.6)",
+          background: scrolled
+            ? "rgba(10,10,11,0.92)"
+            : isMobile ? "#0a0a0b" : "rgba(10,10,11,0.6)",
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
           transition: "border-color 0.3s, background 0.3s",
