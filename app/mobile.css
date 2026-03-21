@@ -53,7 +53,8 @@ html, body {
 /* ─── Hero ───────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .hero {
-    padding: 110px 24px 64px !important;
+    padding: 120px 24px 64px !important;
+    padding-top: max(130px, calc(90px + env(safe-area-inset-top))) !important;
     min-height: 100svh;
   }
 
@@ -304,7 +305,10 @@ html, body {
   }
 
   .hero {
-    padding: 100px 16px 56px !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    padding-bottom: 56px !important;
+    padding-top: max(120px, calc(90px + env(safe-area-inset-top))) !important;
   }
 
   .hero-sub {
