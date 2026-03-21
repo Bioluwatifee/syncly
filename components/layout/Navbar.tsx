@@ -32,9 +32,9 @@ export default function Navbar() {
           top: 0, left: 0, right: 0,
           zIndex: 200,
           borderBottom: scrolled ? "1px solid rgba(255,255,255,0.07)" : "1px solid transparent",
-          background: scrolled ? "rgba(10,10,11,0.85)" : "transparent",
-          backdropFilter: scrolled ? "blur(20px)" : "blur(0px)",
-          transition: "border-color 0.3s, background 0.3s, backdrop-filter 0.3s",
+          background: scrolled ? "rgba(10,10,11,0.92)" : "rgba(10,10,11,0.6)",
+          backdropFilter: "blur(20px)",
+          transition: "border-color 0.3s, background 0.3s",
         }}
         className="syncly-nav"
       >
@@ -49,7 +49,7 @@ export default function Navbar() {
           flexShrink: 0,
         }}>
           <img
-            src="/favicon-32x32.png"
+            src="/favicon-96x96.png"
             alt="Syncly"
             width={22}
             height={22}
@@ -221,8 +221,6 @@ export default function Navbar() {
         @media (max-width: 768px) {
           .syncly-nav {
             padding: 20px 20px !important;
-            background: rgba(10,10,11,0.95) !important;
-            backdrop-filter: blur(20px) !important;
             border-bottom: 1px solid rgba(255,255,255,0.07) !important;
           }
           .nav-links-desktop {
