@@ -9,7 +9,20 @@ export default function Footer() {
       justifyContent: "space-between",
       alignItems: "center",
       fontFamily: "'DM Sans', sans-serif",
-    }}>
+    }} className="site-footer">
+
+      <style>{`
+        @media (max-width: 768px) {
+          .site-footer {
+            flex-direction: column !important;
+            align-items: center !important;
+            text-align: center !important;
+            padding: 36px 24px !important;
+            gap: 16px !important;
+          }
+        }
+      `}</style>
+
       {/* Logo */}
       <a href="/" style={{
         display: "flex", alignItems: "center", gap: 8,
@@ -33,10 +46,10 @@ export default function Footer() {
       </a>
 
       {/* Note */}
-      <div style={{ fontSize: 13, color: "#6b6870" }}>
-        Built in public · Follow the journey on{" "}
+      <div style={{ fontSize: 13, color: "#6b6870", lineHeight: 1.6 }}>
+        Built in public by Boluwatife Ayodeji · Follow the journey on{" "}
         <a
-          href="https://linkedin.com"
+          href="https://www.linkedin.com/in/ayodeji-boluwatife/"
           target="_blank"
           rel="noopener noreferrer"
           style={{ color: "#6b6870", textDecoration: "underline", transition: "color 0.2s" }}
@@ -49,22 +62,26 @@ export default function Footer() {
 
       {/* Links */}
       <div className="footer-links" style={{ display: "flex", gap: 24 }}>
-        {[
-          { label: "GitHub",  href: "#" },
-          { label: "LinkedIn", href: "#" },
-          { label: "Privacy", href: "#" },
-        ].map(({ label, href }) => (
-          <a
-            key={label}
-            href={href}
-            style={{ fontSize: 13, color: "#6b6870", textDecoration: "none", transition: "color 0.2s" }}
-            onMouseEnter={e => (e.currentTarget.style.color = "#f0ede8")}
-            onMouseLeave={e => (e.currentTarget.style.color = "#6b6870")}
-          >
-            {label}
-          </a>
-        ))}
+        <a
+          href="https://x.com/hi_stanYe"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ fontSize: 13, color: "#6b6870", textDecoration: "none", transition: "color 0.2s" }}
+          onMouseEnter={e => (e.currentTarget.style.color = "#f0ede8")}
+          onMouseLeave={e => (e.currentTarget.style.color = "#6b6870")}
+        >
+          X / Twitter
+        </a>
+        <a
+          href="#"
+          style={{ fontSize: 13, color: "#6b6870", textDecoration: "none", transition: "color 0.2s" }}
+          onMouseEnter={e => (e.currentTarget.style.color = "#f0ede8")}
+          onMouseLeave={e => (e.currentTarget.style.color = "#6b6870")}
+        >
+          Privacy
+        </a>
       </div>
+
     </footer>
   );
 }
