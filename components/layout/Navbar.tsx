@@ -28,12 +28,14 @@ export default function Navbar() {
           alignItems: "center",
           justifyContent: "space-between",
           padding: "28px 60px",
+          paddingTop: "max(28px, calc(28px + env(safe-area-inset-top)))",
           position: "fixed",
           top: 0, left: 0, right: 0,
-          zIndex: 200,
+          zIndex: 1000,
           borderBottom: scrolled ? "1px solid rgba(255,255,255,0.07)" : "1px solid transparent",
           background: scrolled ? "rgba(10,10,11,0.92)" : "rgba(10,10,11,0.6)",
           backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
           transition: "border-color 0.3s, background 0.3s",
         }}
         className="syncly-nav"
