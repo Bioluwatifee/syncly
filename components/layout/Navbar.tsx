@@ -40,13 +40,13 @@ export default function Navbar() {
           paddingTop: "max(28px, calc(28px + env(safe-area-inset-top)))",
           position: "fixed",
           top: 0, left: 0, right: 0,
-          zIndex: 1000,
+          zIndex: 9999,
           borderBottom: scrolled ? "1px solid rgba(255,255,255,0.07)" : "1px solid transparent",
           background: scrolled
             ? "rgba(10,10,11,0.92)"
             : isMobile ? "#0a0a0b" : "rgba(10,10,11,0.6)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
           transition: "border-color 0.3s, background 0.3s",
         }}
         className="syncly-nav"

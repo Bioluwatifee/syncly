@@ -8,13 +8,14 @@ export default function Hero() {
   ];
 
   return (
-    <section style={{
+    <section className="hero" style={{
       minHeight: "100vh",
       display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
       textAlign: "center",
       padding: "140px 60px 80px",
       position: "relative", overflow: "hidden",
+      isolation: "isolate",
     }}>
       {/* Background orbs */}
       <div style={{ position: "absolute", width: 600, height: 600, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(232,197,71,0.12) 0%, transparent 70%)", top: -200, left: -200, animation: "drift 12s ease-in-out infinite alternate", pointerEvents: "none" }} />
