@@ -11,6 +11,7 @@ interface TrackResult {
   artist: string;
   imageUrl?: string;
   status: "success" | "failed" | "pending";
+  failureReason?: string;
 }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
@@ -27,9 +28,18 @@ const MOCK_TRACKS: TrackResult[] = [
   { id: "t3", name: "Chasing the moon",     artist: "Ryder",  imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed"  },
 ];
 
+// TODO: Replace placeholder reasons with real API error responses when Spotify and YouTube Music OAuth is wired up
 const MOCK_FAILED_TRACKS: TrackResult[] = [
-  { id: "f1", name: "Chasing the moon", artist: "Ryder", imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed" },
-  { id: "f2", name: "Chasing the moon", artist: "Ryder", imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed" },
+  { id: "f1", name: "Chasing the moon",     artist: "Ryder", imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed", failureReason: "Not available on YouTube Music" },
+  { id: "f2", name: "Midnight Rain (Demo)", artist: "Taylor Swift", imageUrl: "https://images.unsplash.com/photo-1516912481808-3406841bd33c?w=100&h=100&fit=crop", status: "failed", failureReason: "Explicit version unavailable" },
+  { id: "f3", name: "Golden Hour",          artist: "JVKE", imageUrl: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=100&h=100&fit=crop", status: "failed", failureReason: "Region restricted" },
+  { id: "f4", name: "Levitating",           artist: "Dua Lipa", imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed", failureReason: "Not available on YouTube Music" },
+];
+
+// Subset of failed tracks that still fail after retry (for post-retry partial/error state)
+const MOCK_POST_RETRY_FAILED: TrackResult[] = [
+  { id: "f1", name: "Chasing the moon",     artist: "Ryder", imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed", failureReason: "Not available on YouTube Music" },
+  { id: "f3", name: "Golden Hour",          artist: "JVKE", imageUrl: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=100&h=100&fit=crop", status: "failed", failureReason: "Region restricted" },
 ];
 
 const SELECTED_PLAYLIST = MOCK_PLAYLISTS[0];
@@ -98,8 +108,8 @@ const btnBase: React.CSSProperties = {
 const btnWhite: React.CSSProperties  = { ...btnBase, background: "#fff",    color: "#0a0a0b" };
 const btnYellow: React.CSSProperties = { ...btnBase, background: "#e8c547", color: "#0a0a0b" };
 
-// ─── Progress bar ─────────────────────────────────────────────────────────────
-function ProgressBar({ done, total, label }: { done: number; total: number; label: string }) {
+// ─── Progress bar (gradient) ──────────────────────────────────────────────────
+function ProgressBar({ done, total, label, sublabel }: { done: number; total: number; label: string; sublabel?: string }) {
   return (
     <div style={{ marginTop: 24 }}>
       <div style={{ height: 6, borderRadius: 100, background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: 8 }}>
@@ -110,13 +120,44 @@ function ProgressBar({ done, total, label }: { done: number; total: number; labe
           transition: "width 0.4s ease",
         }} />
       </div>
-      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>{label}</div>
+      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>
+        {label}
+        {sublabel && (
+          <span style={{ opacity: 0.45 }}>{" · "}{sublabel}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Success/fail split bar ───────────────────────────────────────────────────
+function SplitBar({ success, failed, total }: { success: number; failed: number; total: number }) {
+  const successPct = Math.round((success / total) * 100);
+  const failedPct  = Math.round((failed  / total) * 100);
+  return (
+    <div style={{ margin: "16px 0 8px" }}>
+      <div style={{ height: 8, borderRadius: 100, overflow: "hidden", background: "rgba(255,255,255,0.08)", display: "flex" }}>
+        <div style={{ width: `${successPct}%`, background: "#1ed760", borderRadius: "100px 0 0 100px", transition: "width 0.4s ease" }} />
+        <div style={{ width: `${failedPct}%`,  background: "#e85f47", borderRadius: failedPct === 100 ? 100 : "0 100px 100px 0", transition: "width 0.4s ease" }} />
+      </div>
+      <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+          <div style={{ width: 8, height: 8, borderRadius: 2, background: "#1ed760", flexShrink: 0 }} />
+          {success} successful
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+          <div style={{ width: 8, height: 8, borderRadius: 2, background: "#e85f47", flexShrink: 0 }} />
+          {failed} failed
+        </div>
+      </div>
     </div>
   );
 }
 
 // ─── Playlist card (yellow border) ───────────────────────────────────────────
-function PlaylistCard() {
+function PlaylistCard({ retryCount }: { retryCount?: number }) {
+  const count = retryCount ?? SELECTED_PLAYLIST.trackCount;
+  const showRetryLabel = retryCount !== undefined;
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 14,
@@ -131,12 +172,17 @@ function PlaylistCard() {
         <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{SELECTED_PLAYLIST.name}</div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>{SELECTED_PLAYLIST.owner}</div>
       </div>
-      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>{SELECTED_PLAYLIST.trackCount} songs</div>
+      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", flexShrink: 0, textAlign: "right" }}>
+        <span>{count} songs</span>
+        {showRetryLabel && (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>(failed previously)</div>
+        )}
+      </div>
     </div>
   );
 }
 
-// ─── Platforms row ────────────────────────────────────────────────────────────
+// ─── Platform row ─────────────────────────────────────────────────────────────
 function PlatformRow() {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
@@ -147,15 +193,78 @@ function PlatformRow() {
   );
 }
 
+// ─── Copy failed songs list button ───────────────────────────────────────────
+function CopyFailedButton({ tracks }: { tracks: TrackResult[] }) {
+  const [copied, setCopied] = useState(false);
+  function handleCopy() {
+    const text = tracks.map((t, i) => `${i + 1}. ${t.name} — ${t.artist}`).join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      style={{
+        display: "flex", alignItems: "center", gap: 6,
+        background: "transparent", border: "1px solid rgba(255,255,255,0.15)",
+        borderRadius: 100, padding: "10px 18px",
+        fontSize: 13, color: "rgba(255,255,255,0.6)",
+        fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
+        cursor: "pointer", transition: "border-color 0.2s, color 0.2s",
+        marginTop: 8,
+      }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.3)"; (e.currentTarget as HTMLElement).style.color = "#fff"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.15)"; (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.6)"; }}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+      </svg>
+      {copied ? "Copied!" : "Copy failed songs list"}
+    </button>
+  );
+}
+
+// ─── Shared failed track list ─────────────────────────────────────────────────
+function FailedTrackList({ tracks, isMobile, showReasons }: { tracks: TrackResult[]; isMobile: boolean; showReasons?: boolean }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      {tracks.map((t, i) => (
+        <div key={t.id} style={{
+          display: "flex", alignItems: "center", gap: 12,
+          padding: isMobile ? "14px 0" : "13px 4px",
+          borderBottom: i < tracks.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
+        }}>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", width: 18, textAlign: "right", flexShrink: 0 }}>{i + 1}.</span>
+          <div style={{ width: 40, height: 40, borderRadius: 7, overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,0.08)" }}>
+            {t.imageUrl && <img src={t.imageUrl} alt={t.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#fff", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{t.artist}</div>
+          </div>
+          {showReasons && t.failureReason ? (
+            // TODO: Replace placeholder reasons with real API error responses when Spotify and YouTube Music OAuth is wired up
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", fontStyle: "italic", flexShrink: 0, maxWidth: 120, textAlign: "right", lineHeight: 1.3 }}>{t.failureReason}</span>
+          ) : (
+            <XIcon />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── State: Transferring ──────────────────────────────────────────────────────
-function TransferringState({ tracks, total, isMobile }: { tracks: TrackResult[]; total: number; isMobile: boolean }) {
+function TransferringState({ tracks, total, isMobile, isRetry }: { tracks: TrackResult[]; total: number; isMobile: boolean; isRetry?: boolean }) {
   const done = tracks.filter(t => t.status !== "pending").length;
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
-        Migrating playlist…
+        {isRetry ? `Retrying ${total} failed tracks` : "Transferring playlist…"}
       </h2>
-      <PlaylistCard />
+      <PlaylistCard retryCount={isRetry ? total : undefined} />
       <div style={{ margin: "4px 0" }}>
         {tracks.map((t, i) => (
           <div key={t.id} style={{
@@ -187,10 +296,10 @@ function SuccessState({ isMobile }: { isMobile: boolean }) {
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
-        Migrating playlist…
+        Transferring playlist…
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "32px 20px" : "48px 32px", textAlign: "center" }}>
-        <div style={{ fontSize: isMobile ? 17 : 20, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Playlist successfully migrated</div>
+        <div style={{ fontSize: isMobile ? 17 : 20, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Playlist successfully transferred</div>
         <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 24 }}>
           {SELECTED_PLAYLIST.name} by {SELECTED_PLAYLIST.owner}
         </div>
@@ -203,46 +312,76 @@ function SuccessState({ isMobile }: { isMobile: boolean }) {
           <button style={btnYellow}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
-          >Migrate a new playlist</button>
+          >Start another transfer</button>
         </div>
       </div>
-      <ProgressBar done={24} total={24} label="24 out of 24 completed" />
+      <ProgressBar done={24} total={24} label="24 out of 24 transferred" />
     </>
   );
 }
 
 // ─── State: Partial Match ─────────────────────────────────────────────────────
-function PartialState({ failedTracks, isMobile }: { failedTracks: TrackResult[]; isMobile: boolean }) {
-  const total = 24, migrated = 18;
+function PartialState({ failedTracks, isMobile, onRetry }: { failedTracks: TrackResult[]; isMobile: boolean; onRetry: () => void }) {
+  const total = 24, transferred = 18;
+  const failed = failedTracks.length;
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
-        Migrating playlist…
+        Transferring playlist…
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
-        <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>{migrated} out of {total} songs migrated</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>{failedTracks.length} songs could not be found</div>
+        <div style={{ textAlign: "center", marginBottom: 4 }}>
+          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>{transferred} out of {total} songs transferred</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>{failed} songs could not be found</div>
+          <SplitBar success={transferred} failed={failed} total={total} />
+          <div style={{ marginTop: 20, marginBottom: 4 }}><PlatformRow /></div>
+        </div>
+        <FailedTrackList tracks={failedTracks} isMobile={isMobile} />
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+          <CopyFailedButton tracks={failedTracks} />
+        </div>
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
+          <button style={btnWhite}
+            onClick={onRetry}
+            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
+          >Retry failed songs</button>
+          <button style={btnYellow}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
+          >Start another transfer</button>
+        </div>
+      </div>
+      <ProgressBar done={transferred} total={total} label={`${transferred} out of ${total} completed`} sublabel={`${failed} songs not matched`} />
+    </>
+  );
+}
+
+// ─── State: Post-retry partial/full failure (no more retry allowed) ───────────
+function PostRetryFailureState({ failedTracks, totalRetried, isMobile }: { failedTracks: TrackResult[]; totalRetried: number; isMobile: boolean }) {
+  const transferred = totalRetried - failedTracks.length;
+  return (
+    <>
+      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
+        Transferring playlist…
+      </h2>
+      <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
+        <div style={{ textAlign: "center", marginBottom: 4 }}>
+          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>
+            Oops! {transferred} out of {totalRetried} songs transferred
+          </div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>
+            It&apos;s on us, {failedTracks.length} {failedTracks.length === 1 ? "song" : "songs"} still failed to transfer
+          </div>
           <PlatformRow />
         </div>
-        <div style={{ marginBottom: 24 }}>
-          {failedTracks.map((t, i) => (
-            <div key={t.id} style={{
-              display: "flex", alignItems: "center", gap: 12,
-              padding: isMobile ? "14px 0" : "13px 4px",
-              borderBottom: i < failedTracks.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
-            }}>
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", width: 18, textAlign: "right", flexShrink: 0 }}>{i + 1}.</span>
-              <div style={{ width: 40, height: 40, borderRadius: 7, overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,0.08)" }}>
-                {t.imageUrl && <img src={t.imageUrl} alt={t.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#fff", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{t.artist}</div>
-              </div>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", fontStyle: "italic", flexShrink: 0 }}>Not found</span>
-            </div>
-          ))}
+        {/* Failed tracks with reasons */}
+        {/* TODO: Replace placeholder reasons with real API error responses when Spotify and YouTube Music OAuth is wired up */}
+        <div style={{ marginTop: 16 }}>
+          <FailedTrackList tracks={failedTracks} isMobile={isMobile} showReasons />
+        </div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+          <CopyFailedButton tracks={failedTracks} />
         </div>
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
           <button style={btnWhite}
@@ -252,20 +391,19 @@ function PartialState({ failedTracks, isMobile }: { failedTracks: TrackResult[];
           <button style={btnYellow}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
-          >Migrate a new playlist</button>
+          >Start another transfer</button>
         </div>
       </div>
-      <ProgressBar done={migrated} total={total} label={`${migrated} out of ${total} completed`} />
     </>
   );
 }
 
-// ─── State: Error ─────────────────────────────────────────────────────────────
+// ─── State: Error (total failure) ────────────────────────────────────────────
 function ErrorState({ isMobile }: { isMobile: boolean }) {
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
-        Migrating playlist…
+        Transferring playlist…
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
@@ -282,7 +420,7 @@ function ErrorState({ isMobile }: { isMobile: boolean }) {
           <button style={btnYellow}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
-          >Migrate a new playlist</button>
+          >Start another transfer</button>
         </div>
       </div>
     </>
@@ -298,6 +436,8 @@ export default function TransferPage() {
   const [playlists,     setPlaylists]     = useState<PlaylistItem[]>([]);
   const [selectedId,    setSelectedId]    = useState<string | null>(null);
   const [isMobile,      setIsMobile]      = useState(false);
+  // Tracks whether the user has already used their one retry
+  const [hasRetried,    setHasRetried]    = useState(false);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 600px)");
@@ -307,10 +447,7 @@ export default function TransferPage() {
     return () => mq.removeEventListener("change", handler);
   }, []);
 
-  // Derive page state from real connection/selection state
-  const isConnected = fromConnected || toConnected;
   const canTransfer = fromConnected && toConnected && selectedId !== null;
-  const isResultState = false; // will be true once real transfer API is wired up
 
   async function handleFromConnect() {
     if (!fromPlatform) return;
@@ -326,6 +463,11 @@ export default function TransferPage() {
   }
   function handleFromSelect(p: Platform) { setFromPlatform(p); setFromConnected(false); setPlaylists([]); setSelectedId(null); }
   function handleToSelect(p: Platform)   { setToPlatform(p); setToConnected(false); }
+
+  function handleRetry() {
+    setHasRetried(true);
+    // TODO: trigger real retry API call here
+  }
 
   const cardPadding = isMobile ? "24px 16px 24px" : "36px 36px 32px";
 
@@ -360,23 +502,9 @@ export default function TransferPage() {
             aria-label="Back to home"
           >←</a>
 
-          <a href="/" style={{
-            display: "flex", alignItems: "center", gap: 8,
-            textDecoration: "none", flexShrink: 0,
-          }}>
-            <img
-              src="/favicon-96x96.png"
-              alt="Syncly"
-              width={24}
-              height={24}
-              style={{ display: "block", flexShrink: 0 }}
-            />
-            <span style={{
-              fontFamily: "'Aleo', serif",
-              fontSize: 20, fontWeight: 700,
-              letterSpacing: "-0.5px",
-              color: "#f0ede8",
-            }}>
+          <a href="/" style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none", flexShrink: 0 }}>
+            <img src="/favicon-96x96.png" alt="Syncly" width={24} height={24} style={{ display: "block", flexShrink: 0 }} />
+            <span style={{ fontFamily: "'Aleo', serif", fontSize: 20, fontWeight: 700, letterSpacing: "-0.5px", color: "#f0ede8" }}>
               Syncly
             </span>
           </a>
@@ -384,20 +512,10 @@ export default function TransferPage() {
 
         {/* ── Page headings ── */}
         <div style={{ marginBottom: isMobile ? 24 : 40 }}>
-          <h1 style={{
-            fontFamily: "'Calligraffitti', cursive",
-            fontSize: isMobile ? 26 : 32,
-            fontWeight: 400, color: "#e8c547",
-            lineHeight: 1.15, marginBottom: 2,
-          }}>
+          <h1 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 26 : 32, fontWeight: 400, color: "#e8c547", lineHeight: 1.15, marginBottom: 2 }}>
             Welcome, stranger…
           </h1>
-          <p style={{
-            fontFamily: "'Calligraffitti', cursive",
-            fontSize: isMobile ? 15 : 18,
-            color: "#e8c547", fontWeight: 400,
-            lineHeight: 1.3, opacity: 0.85,
-          }}>
+          <p style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 15 : 18, color: "#e8c547", fontWeight: 400, lineHeight: 1.3, opacity: 0.85 }}>
             Lets move some music!
           </p>
         </div>
@@ -409,7 +527,7 @@ export default function TransferPage() {
           border: "1px solid rgba(255,255,255,0.06)",
           boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
         }}>
-          {/* Platform selector label */}
+          {/* Platform selector */}
           <h2 style={{
             fontFamily: "'Calligraffitti', cursive",
             fontSize: isMobile ? 20 : 26,
@@ -433,7 +551,7 @@ export default function TransferPage() {
           {/* Divider */}
           <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: isMobile ? "20px 0" : "32px 0" }} />
 
-          {/* ── Playlist list + Transfer button ── */}
+          {/* ── Playlist list + Transfer button (default/connected state) ── */}
           <div style={{ marginBottom: isMobile ? 20 : 32 }}>
             <PlaylistList
               platform={fromPlatform}
@@ -444,7 +562,6 @@ export default function TransferPage() {
             />
           </div>
 
-          {/* Transfer button — full width on mobile, centered pill on desktop */}
           <div style={{ display: "flex", justifyContent: isMobile ? "stretch" : "center" }}>
             <button
               disabled={!canTransfer}
