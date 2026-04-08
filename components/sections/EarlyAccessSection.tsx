@@ -36,7 +36,7 @@ export default function EarlyAccessSection() {
           rel="noopener noreferrer"
           className="ea-btn"
           style={{
-            display: "inline-flex", alignItems: "center", gap: 10,
+            display: "inline-flex", alignItems: "center",
             background: "var(--accent)", color: "#0a0a0b",
             fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 16,
             padding: "18px 40px", borderRadius: 100,
@@ -46,9 +46,7 @@ export default function EarlyAccessSection() {
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-3px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 20px 50px rgba(232,197,71,0.3)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
         >
-          <span style={{ fontSize: 14, opacity: 0.7 }}>✦</span>
-          Get early access
-          <span style={{ fontSize: 18 }}>→</span>
+          Get Early Access
         </a>
 
         {/* Waveform */}

@@ -86,8 +86,8 @@ html, body {
     margin-bottom: 24px !important;
   }
 
-  /* H1 */
-  h1 {
+  /* Hero H1 only */
+  .hero-title {
     font-size: clamp(42px, 10vw, 56px) !important;
     letter-spacing: -2px !important;
     margin-bottom: 18px !important;
@@ -299,7 +299,7 @@ html, body {
 
 /* ─── Extra small: 375px ─────────────────────────────────────────────────── */
 @media (max-width: 390px) {
-  h1 {
+  .hero-title {
     font-size: 36px !important;
     letter-spacing: -1.5px !important;
   }
@@ -439,4 +439,3 @@ html, body {
     transform: rotate(90deg) !important;
   }
 }
-

@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "@/types";
 import PlatformSelector from "@/components/transfer/PlatformSelector";
 import PlaylistList, { PlaylistItem } from "@/components/transfer/PlaylistList";
+import { useToast } from "@/components/ui/ToastProvider";
+import CheckMarkIcon from "@/components/ui/CheckMarkIcon";
+
+const SPOTIFY_PLAYLIST_COUNT_CACHE_KEY = "syncly_spotify_playlist_count_cache_v2";
+const SPOTIFY_FORCE_FRESH_AUTH_KEY = "syncly_force_spotify_fresh_auth_once";
 
 interface TrackResult {
   id: string;
@@ -81,9 +86,7 @@ const CheckIcon = () => (
     width: 26, height: 26, borderRadius: "50%", background: "#1ed760",
     display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
   }}>
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12"/>
-    </svg>
+    <CheckMarkIcon size={13} color="#0a0a0b" />
   </div>
 );
 
@@ -429,6 +432,7 @@ function ErrorState({ isMobile }: { isMobile: boolean }) {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function TransferPage() {
+  const { notify } = useToast();
   const [fromPlatform,  setFromPlatform]  = useState<Platform | null>(null);
   const [toPlatform,    setToPlatform]    = useState<Platform | null>(null);
   const [fromConnected, setFromConnected] = useState(false);
@@ -436,40 +440,609 @@ export default function TransferPage() {
   const [playlists,     setPlaylists]     = useState<PlaylistItem[]>([]);
   const [selectedId,    setSelectedId]    = useState<string | null>(null);
   const [isMobile,      setIsMobile]      = useState(false);
+  const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
+  const [spotifyAccountConnected, setSpotifyAccountConnected] = useState(false);
+  const [youtubeAccountConnected, setYoutubeAccountConnected] = useState(false);
+  const [hasLoadedSpotifyPlaylists, setHasLoadedSpotifyPlaylists] = useState(false);
+  const [hasAttemptedSpotifyLoad, setHasAttemptedSpotifyLoad] = useState(false);
+  const [playlistCountLoadingId, setPlaylistCountLoadingId] = useState<string | null>(null);
+  const [disconnectTarget, setDisconnectTarget] = useState<"spotify" | "youtube" | null>(null);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [hostReady, setHostReady] = useState(true);
   // Tracks whether the user has already used their one retry
   const [hasRetried,    setHasRetried]    = useState(false);
+  const playlistsLoadInFlightRef = useRef(false);
+  const countHydrationInFlightRef = useRef(false);
+  const hydratedPlaylistIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    // Keep this as a no-op hydration guard for future use.
+    // We intentionally avoid forced localhost/127 redirects because they can trap
+    // users in a redirecting state when browser/session policies change.
+    if (typeof window === "undefined") return;
+    setHostReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hostReady) return;
+
     const mq = window.matchMedia("(max-width: 600px)");
     setIsMobile(mq.matches);
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
+  }, [hostReady]);
+
+  const isDirectionSupported =
+    (fromPlatform === "spotify" && toPlatform === "youtube") ||
+    (fromPlatform === "youtube" && toPlatform === "spotify");
+  const canTransfer = fromConnected && toConnected && selectedId !== null && isDirectionSupported;
+
+  const loadSourcePlaylists = useCallback(async (sourcePlatform: "spotify" | "youtube") => {
+    if (playlistsLoadInFlightRef.current) return;
+    playlistsLoadInFlightRef.current = true;
+    hydratedPlaylistIdsRef.current.clear();
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12_000);
+    setIsLoadingPlaylists(true);
+    setHasAttemptedSpotifyLoad(true);
+    try {
+      const cachedCountById: Record<string, number> =
+        sourcePlatform === "spotify" && typeof window !== "undefined"
+          ? (() => {
+              try {
+                const raw = window.localStorage.getItem(SPOTIFY_PLAYLIST_COUNT_CACHE_KEY);
+                if (!raw) return {};
+                const parsed = JSON.parse(raw) as Record<string, unknown>;
+                const normalized: Record<string, number> = {};
+                for (const [key, value] of Object.entries(parsed)) {
+                  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+                    normalized[key] = Math.trunc(value);
+                  }
+                }
+                return normalized;
+              } catch {
+                return {};
+              }
+            })()
+          : {};
+
+      const response = await fetch(`/api/${sourcePlatform}?resource=playlists`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        if (response.status === 401) {
+          // If backend says disconnected, reflect that immediately in UI.
+          setFromConnected(false);
+          setPlaylists([]);
+          setSelectedId(null);
+          setPlaylistCountLoadingId(null);
+          setHasLoadedSpotifyPlaylists(false);
+          if (sourcePlatform === "spotify") {
+            setSpotifyAccountConnected(false);
+          } else {
+            setYoutubeAccountConnected(false);
+          }
+        }
+        const platformLabel = sourcePlatform === "spotify" ? "Spotify" : "YouTube";
+        const message = payload?.error ?? `Unable to fetch ${platformLabel} playlists right now.`;
+        throw new Error(message);
+      }
+
+      const payload = await response.json();
+      const nextPlaylists: PlaylistItem[] = Array.isArray(payload.playlists)
+        ? payload.playlists.map((playlist: any) => {
+            const id = String(playlist?.id ?? "");
+            const rawTrackCount =
+              playlist?.trackCount ??
+              playlist?.tracks?.total ??
+              playlist?.tracksTotal ??
+              playlist?.track_count;
+            const parsedTrackCount = Number(rawTrackCount);
+            const safeTrackCount = Number.isFinite(parsedTrackCount) && parsedTrackCount >= 0
+              ? Math.trunc(parsedTrackCount)
+              : (typeof cachedCountById[id] === "number" ? cachedCountById[id] : null);
+
+            return {
+              id,
+              name: String(playlist?.name ?? "Untitled playlist"),
+              owner: String(playlist?.owner ?? "Spotify User"),
+              trackCount: safeTrackCount,
+              imageUrl: playlist?.imageUrl ? String(playlist.imageUrl) : undefined,
+            };
+          })
+        : [];
+      setPlaylists((previous) => {
+        const previousById = new Map(previous.map((playlist) => [playlist.id, playlist]));
+        return nextPlaylists.map((playlist) => {
+          const existing = previousById.get(playlist.id);
+          if (!existing) return playlist;
+
+          return {
+            ...playlist,
+            // Preserve a known good count in-session if a later response omits totals.
+            trackCount: playlist.trackCount ?? existing.trackCount,
+          };
+        });
+      });
+      setHasLoadedSpotifyPlaylists(true);
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        const platformLabel = sourcePlatform === "spotify" ? "Spotify" : "YouTube";
+        throw new Error(`${platformLabel} request timed out. Please click connect again.`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+      setIsLoadingPlaylists(false);
+      playlistsLoadInFlightRef.current = false;
+    }
   }, []);
 
-  const canTransfer = fromConnected && toConnected && selectedId !== null;
+  useEffect(() => {
+    if (!hostReady) return;
+
+    let mounted = true;
+
+    async function hydrateConnectionState() {
+      const params = new URLSearchParams(window.location.search);
+      const authResult = params.get("auth");
+      const reason = params.get("reason");
+      const connectSide = params.get("connectSide");
+      let shouldLoadSourcePlaylists = false;
+      let sourceToLoad: "spotify" | "youtube" | null = null;
+
+      if (authResult === "spotify_success") {
+        setSpotifyAccountConnected(true);
+        if (connectSide === "to") {
+          setToPlatform("spotify");
+          setToConnected(true);
+        } else {
+          setFromPlatform("spotify");
+          setFromConnected(true);
+          setHasAttemptedSpotifyLoad(false);
+          shouldLoadSourcePlaylists = true;
+          sourceToLoad = "spotify";
+        }
+      }
+
+      if (authResult === "youtube_success") {
+        setYoutubeAccountConnected(true);
+        if (connectSide === "from") {
+          setFromPlatform("youtube");
+          setFromConnected(true);
+          setHasAttemptedSpotifyLoad(false);
+          shouldLoadSourcePlaylists = true;
+          sourceToLoad = "youtube";
+        } else {
+          setToPlatform("youtube");
+          setToConnected(true);
+        }
+      }
+
+      if (authResult?.endsWith("_error")) {
+        const fallback = "Authentication failed. Please try again.";
+        const message = reason ? `Authentication failed: ${reason.replaceAll("_", " ")}` : fallback;
+        notify({
+          tone: "error",
+          title: "Authentication failed",
+          description: message,
+        });
+      }
+
+      if (authResult || reason || connectSide) {
+        params.delete("auth");
+        params.delete("reason");
+        params.delete("connectSide");
+        const newQuery = params.toString();
+        const nextUrl = `${window.location.pathname}${newQuery ? `?${newQuery}` : ""}`;
+        window.history.replaceState({}, "", nextUrl);
+      }
+
+      try {
+        const statusResponse = await fetch("/api/auth?action=status", { cache: "no-store" });
+        if (!statusResponse.ok) return;
+
+        const status = await statusResponse.json();
+        if (!mounted) return;
+
+        const spotifyConnected = Boolean(status.spotifyConnected);
+        const youtubeConnected = Boolean(status.youtubeConnected);
+
+        setSpotifyAccountConnected(spotifyConnected);
+        setYoutubeAccountConnected(youtubeConnected);
+
+        const fromIsConnected =
+          (fromPlatform === "spotify" && spotifyConnected) ||
+          (fromPlatform === "youtube" && youtubeConnected);
+        const toIsConnected =
+          (toPlatform === "spotify" && spotifyConnected) ||
+          (toPlatform === "youtube" && youtubeConnected);
+
+        setFromConnected(fromIsConnected);
+        setToConnected(toIsConnected);
+
+        if (!fromIsConnected) {
+          setPlaylists([]);
+          setSelectedId(null);
+          setPlaylistCountLoadingId(null);
+          setHasLoadedSpotifyPlaylists(false);
+        } else if (fromPlatform === "spotify" || fromPlatform === "youtube") {
+          shouldLoadSourcePlaylists = true;
+          sourceToLoad = fromPlatform;
+        }
+      } catch {
+        // Ignore auth status fetch errors for MVP UX continuity.
+      }
+
+      if (!mounted || !shouldLoadSourcePlaylists || !sourceToLoad) return;
+
+      try {
+        await loadSourcePlaylists(sourceToLoad);
+      } catch (error) {
+        if (!mounted) return;
+        const message = error instanceof Error ? error.message : "Unable to fetch playlists.";
+        notify({
+          tone: "error",
+          title: "Could not load playlists",
+          description: message,
+        });
+      }
+    }
+
+    hydrateConnectionState();
+    return () => {
+      mounted = false;
+    };
+  }, [fromPlatform, hostReady, loadSourcePlaylists, notify, toPlatform]);
+
+  useEffect(() => {
+    if (!hostReady) return;
+
+    const fromIsConnected =
+      (fromPlatform === "spotify" && spotifyAccountConnected) ||
+      (fromPlatform === "youtube" && youtubeAccountConnected);
+    const toIsConnected =
+      (toPlatform === "spotify" && spotifyAccountConnected) ||
+      (toPlatform === "youtube" && youtubeAccountConnected);
+
+    setFromConnected(fromIsConnected);
+    setToConnected(toIsConnected);
+  }, [fromPlatform, hostReady, spotifyAccountConnected, toPlatform, youtubeAccountConnected]);
+
+  useEffect(() => {
+    if (!hostReady) return;
+    if (!fromConnected) return;
+    if (fromPlatform !== "spotify" && fromPlatform !== "youtube") return;
+
+    void loadSourcePlaylists(fromPlatform);
+  }, [fromConnected, fromPlatform, hostReady, loadSourcePlaylists]);
+
+  useEffect(() => {
+    if (!hostReady) return;
+    if (!fromConnected || (fromPlatform !== "spotify" && fromPlatform !== "youtube")) return;
+    if (!selectedId) return;
+
+    const selectedPlaylist = playlists.find((playlist) => playlist.id === selectedId);
+    if (!selectedPlaylist || selectedPlaylist.trackCount !== null) return;
+
+    let cancelled = false;
+    const playlistId = selectedId;
+
+    async function loadSelectedPlaylistCount() {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000);
+      setPlaylistCountLoadingId(playlistId);
+      try {
+        const response = await fetch(`/api/${fromPlatform}?resource=trackCount&playlistId=${encodeURIComponent(playlistId)}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+
+        const payload = await response.json();
+        const totalParsed = Number(payload?.total);
+        const resolvedCount =
+          Number.isFinite(totalParsed) && totalParsed >= 0
+            ? Math.trunc(totalParsed)
+            : null;
+
+        if (cancelled || resolvedCount === null) return;
+
+        setPlaylists((prev) =>
+          prev.map((playlist) =>
+            playlist.id === playlistId ? { ...playlist, trackCount: resolvedCount } : playlist
+          )
+        );
+      } catch {
+        // Keep UI responsive; leave count unresolved if this request times out.
+      } finally {
+        clearTimeout(timeoutId);
+        if (!cancelled) {
+          setPlaylistCountLoadingId((current) => (current === playlistId ? null : current));
+        }
+      }
+    }
+
+    void loadSelectedPlaylistCount();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fromConnected, fromPlatform, hostReady, playlists, selectedId]);
+
+  useEffect(() => {
+    if (!hostReady) return;
+    if (!fromConnected || (fromPlatform !== "spotify" && fromPlatform !== "youtube")) return;
+    if (isLoadingPlaylists) return;
+    if (playlists.length === 0) return;
+    if (countHydrationInFlightRef.current) return;
+
+    const pendingIds = playlists
+      .filter((playlist) => playlist.trackCount === null && !hydratedPlaylistIdsRef.current.has(playlist.id))
+      .map((playlist) => playlist.id);
+
+    if (pendingIds.length === 0) return;
+
+    let cancelled = false;
+    countHydrationInFlightRef.current = true;
+
+    async function hydrateAllPlaylistCounts() {
+      for (const playlistId of pendingIds) {
+        if (cancelled) break;
+
+        hydratedPlaylistIdsRef.current.add(playlistId);
+
+        try {
+          const response = await fetch(`/api/${fromPlatform}?resource=trackCount&playlistId=${encodeURIComponent(playlistId)}`, {
+            cache: "no-store",
+          });
+
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null);
+            const message = String(payload?.error ?? "").toLowerCase();
+            if (response.status === 429 || message.includes("too many requests") || message.includes("rate limit")) {
+              break;
+            }
+            continue;
+          }
+
+          const payload = await response.json();
+          const totalParsed = Number(payload?.total);
+          const resolvedCount =
+            Number.isFinite(totalParsed) && totalParsed >= 0 ? Math.trunc(totalParsed) : null;
+
+          if (resolvedCount === null) continue;
+
+          setPlaylists((prev) =>
+            prev.map((playlist) =>
+              playlist.id === playlistId ? { ...playlist, trackCount: resolvedCount } : playlist
+            )
+          );
+
+          if (typeof window !== "undefined" && fromPlatform === "spotify") {
+            try {
+              const raw = window.localStorage.getItem(SPOTIFY_PLAYLIST_COUNT_CACHE_KEY);
+              const parsed = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+              parsed[playlistId] = resolvedCount;
+              window.localStorage.setItem(SPOTIFY_PLAYLIST_COUNT_CACHE_KEY, JSON.stringify(parsed));
+            } catch {
+              // Ignore storage failures for MVP stability.
+            }
+          }
+        } catch {
+          // Ignore transient per-playlist failures.
+        }
+
+        // Gentle pacing to avoid triggering Spotify rate limits.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+
+      countHydrationInFlightRef.current = false;
+    }
+
+    void hydrateAllPlaylistCounts();
+
+    return () => {
+      cancelled = true;
+      countHydrationInFlightRef.current = false;
+    };
+  }, [fromConnected, fromPlatform, hostReady, isLoadingPlaylists, playlists]);
 
   async function handleFromConnect() {
+    if (!hostReady) return;
     if (!fromPlatform) return;
-    await new Promise(r => setTimeout(r, 1500));
-    setFromConnected(true);
-    setPlaylists(MOCK_PLAYLISTS);
-    setSelectedId(null);
+
+    if (fromPlatform !== "spotify" && fromPlatform !== "youtube") {
+      notify({
+        tone: "info",
+        title: "Source not supported yet",
+        description: "MVP currently supports Spotify or YouTube Music as source.",
+      });
+      return;
+    }
+
+    setHasAttemptedSpotifyLoad(false);
+
+    const authUrl = new URL("/api/auth", window.location.origin);
+    authUrl.searchParams.set("action", "connect");
+    authUrl.searchParams.set("platform", fromPlatform);
+    authUrl.searchParams.set("returnTo", "/transfer?connectSide=from");
+    if (typeof window !== "undefined" && fromPlatform === "spotify") {
+      const shouldForceFreshAuth = window.localStorage.getItem(SPOTIFY_FORCE_FRESH_AUTH_KEY) === "1";
+      if (shouldForceFreshAuth) {
+        authUrl.searchParams.set("forceDialog", "1");
+        window.localStorage.removeItem(SPOTIFY_FORCE_FRESH_AUTH_KEY);
+      }
+    }
+    window.location.href = authUrl.toString();
   }
+
   async function handleToConnect() {
+    if (!hostReady) return;
     if (!toPlatform) return;
-    await new Promise(r => setTimeout(r, 1500));
-    setToConnected(true);
+
+    if (toPlatform !== "spotify" && toPlatform !== "youtube") {
+      notify({
+        tone: "info",
+        title: "Destination not supported yet",
+        description: "MVP currently supports Spotify or YouTube Music as destination.",
+      });
+      return;
+    }
+
+    const authUrl = new URL("/api/auth", window.location.origin);
+    authUrl.searchParams.set("action", "connect");
+    authUrl.searchParams.set("platform", toPlatform);
+    authUrl.searchParams.set("returnTo", "/transfer?connectSide=to");
+    if (typeof window !== "undefined" && toPlatform === "spotify") {
+      const shouldForceFreshAuth = window.localStorage.getItem(SPOTIFY_FORCE_FRESH_AUTH_KEY) === "1";
+      if (shouldForceFreshAuth) {
+        authUrl.searchParams.set("forceDialog", "1");
+        window.localStorage.removeItem(SPOTIFY_FORCE_FRESH_AUTH_KEY);
+      }
+    }
+    window.location.href = authUrl.toString();
   }
-  function handleFromSelect(p: Platform) { setFromPlatform(p); setFromConnected(false); setPlaylists([]); setSelectedId(null); }
-  function handleToSelect(p: Platform)   { setToPlatform(p); setToConnected(false); }
+
+  function handleFromSelect(p: Platform) {
+    setFromPlatform(p);
+    const connected = p === "spotify" ? spotifyAccountConnected : p === "youtube" ? youtubeAccountConnected : false;
+    setFromConnected(connected);
+    setPlaylists([]);
+    setSelectedId(null);
+    setPlaylistCountLoadingId(null);
+    setHasLoadedSpotifyPlaylists(false);
+    setHasAttemptedSpotifyLoad(false);
+    hydratedPlaylistIdsRef.current.clear();
+  }
+  function handleToSelect(p: Platform) {
+    setToPlatform(p);
+    const connected = p === "spotify" ? spotifyAccountConnected : p === "youtube" ? youtubeAccountConnected : false;
+    setToConnected(connected);
+  }
 
   function handleRetry() {
     setHasRetried(true);
     // TODO: trigger real retry API call here
   }
 
+  function handleFromDisconnect() {
+    if (!fromConnected || (fromPlatform !== "spotify" && fromPlatform !== "youtube")) return;
+    setDisconnectTarget(fromPlatform);
+  }
+
+  function handleToDisconnect() {
+    if (!toConnected || (toPlatform !== "spotify" && toPlatform !== "youtube")) return;
+    setDisconnectTarget(toPlatform);
+  }
+
+  async function disconnectPlatformConnection({ requireFreshAuth = false }: { requireFreshAuth?: boolean } = {}) {
+    if (!disconnectTarget || isDisconnecting) return;
+
+    setIsDisconnecting(true);
+    try {
+      const response = await fetch(`/api/auth?action=disconnect&platform=${disconnectTarget}`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error ?? "Failed to disconnect platform.");
+      }
+
+      if (disconnectTarget === "spotify") {
+        setSpotifyAccountConnected(false);
+        if (fromPlatform === "spotify") {
+          setFromConnected(false);
+        }
+        if (toPlatform === "spotify") {
+          setToConnected(false);
+        }
+        setPlaylists([]);
+        setSelectedId(null);
+        setPlaylistCountLoadingId(null);
+        setHasLoadedSpotifyPlaylists(false);
+        setHasAttemptedSpotifyLoad(false);
+        hydratedPlaylistIdsRef.current.clear();
+        if (requireFreshAuth && typeof window !== "undefined") {
+          try {
+            window.localStorage.setItem(SPOTIFY_FORCE_FRESH_AUTH_KEY, "1");
+          } catch {
+            // Ignore storage failures for MVP stability.
+          }
+        }
+
+        notify({
+          tone: "success",
+          title: requireFreshAuth ? "Spotify reset" : "Spotify disconnected",
+          description: requireFreshAuth
+            ? "Next Spotify connect will ask for fresh authorization."
+            : "You can reconnect Spotify anytime.",
+        });
+      } else if (disconnectTarget === "youtube") {
+        setYoutubeAccountConnected(false);
+        if (fromPlatform === "youtube") {
+          setFromConnected(false);
+          setPlaylists([]);
+          setSelectedId(null);
+          setPlaylistCountLoadingId(null);
+          setHasLoadedSpotifyPlaylists(false);
+          setHasAttemptedSpotifyLoad(false);
+          hydratedPlaylistIdsRef.current.clear();
+        }
+        if (toPlatform === "youtube") {
+          setToConnected(false);
+        }
+        notify({
+          tone: "success",
+          title: "YouTube Music disconnected",
+          description: "You can reconnect YouTube Music anytime.",
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to disconnect platform.";
+      notify({
+        tone: "error",
+        title: "Disconnect failed",
+        description: message,
+      });
+    } finally {
+      setIsDisconnecting(false);
+      setDisconnectTarget(null);
+    }
+  }
+
+  function handleYesDisconnect() {
+    void disconnectPlatformConnection({ requireFreshAuth: false });
+  }
+
+  function handleResetConnection() {
+    void disconnectPlatformConnection({ requireFreshAuth: true });
+  }
+
   const cardPadding = isMobile ? "24px 16px 24px" : "36px 36px 32px";
+  const disconnectPlatformLabel = disconnectTarget === "spotify" ? "Spotify" : "YouTube Music";
+
+  if (!hostReady) {
+    return (
+      <div style={{
+        minHeight: "100vh",
+        background: "#0f0f0f",
+        color: "rgba(255,255,255,0.65)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "'DM Sans', sans-serif",
+        fontSize: 14,
+      }}>
+        Redirecting...
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -488,19 +1061,22 @@ export default function TransferPage() {
         {/* ── Top bar: back arrow + logo ── */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          marginBottom: isMobile ? 20 : 24,
+          marginBottom: isMobile ? 28 : 30,
         }}>
           <a href="/" style={{
             display: "inline-flex", alignItems: "center",
             color: "#e8c547", textDecoration: "none",
-            fontSize: isMobile ? 24 : 28,
             lineHeight: 1, transition: "transform 0.2s",
             minHeight: 44, minWidth: 44,
           }}
             onMouseEnter={e => (e.currentTarget.style.transform = "translateX(-4px)")}
             onMouseLeave={e => (e.currentTarget.style.transform = "translateX(0)")}
             aria-label="Back to home"
-          >←</a>
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M15 6L9 12L15 18" stroke="currentColor" strokeWidth="1.5" strokeMiterlimit="16" />
+            </svg>
+          </a>
 
           <a href="/" style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none", flexShrink: 0 }}>
             <img src="/favicon-96x96.png" alt="Syncly" width={24} height={24} style={{ display: "block", flexShrink: 0 }} />
@@ -511,13 +1087,10 @@ export default function TransferPage() {
         </div>
 
         {/* ── Page headings ── */}
-        <div style={{ marginBottom: isMobile ? 24 : 40 }}>
-          <h1 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 26 : 32, fontWeight: 400, color: "#e8c547", lineHeight: 1.15, marginBottom: 2 }}>
-            Welcome, stranger…
+        <div style={{ marginBottom: isMobile ? 16 : 30 }}>
+          <h1 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 24 : 32, fontWeight: 400, color: "#e8c547", lineHeight: 1.15, marginBottom: 0 }}>
+            Welcome, lets move some playlists.
           </h1>
-          <p style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 15 : 18, color: "#e8c547", fontWeight: 400, lineHeight: 1.3, opacity: 0.85 }}>
-            Lets move some music!
-          </p>
         </div>
 
         {/* ── Main card ── */}
@@ -526,7 +1099,7 @@ export default function TransferPage() {
           padding: cardPadding,
           border: "1px solid rgba(255,255,255,0.06)",
           boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
-        }}>
+        }} className="transfer-card-inner">
           {/* Platform selector */}
           <h2 style={{
             fontFamily: "'Calligraffitti', cursive",
@@ -546,6 +1119,8 @@ export default function TransferPage() {
             onToSelect={handleToSelect}
             onFromConnect={handleFromConnect}
             onToConnect={handleToConnect}
+            onFromDisconnect={handleFromDisconnect}
+            onToDisconnect={handleToDisconnect}
           />
 
           {/* Divider */}
@@ -556,13 +1131,15 @@ export default function TransferPage() {
             <PlaylistList
               platform={fromPlatform}
               connected={fromConnected}
+              loading={isLoadingPlaylists}
               playlists={playlists}
               selectedId={selectedId}
+              countLoadingId={playlistCountLoadingId}
               onSelect={setSelectedId}
             />
           </div>
 
-          <div style={{ display: "flex", justifyContent: isMobile ? "stretch" : "center" }}>
+          <div style={{ display: "flex", justifyContent: isMobile ? "stretch" : "center" }} className="transfer-btn-wrapper">
             <button
               disabled={!canTransfer}
               style={{
@@ -584,6 +1161,134 @@ export default function TransferPage() {
         </div>
 
       </div>
+
+      {disconnectTarget && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            backdropFilter: "blur(3px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 999,
+            padding: isMobile ? "12px" : "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 460,
+              background: "#131316",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 16,
+              padding: isMobile ? "18px 16px 20px" : "20px 22px 24px",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
+              position: "relative",
+            }}
+          >
+            <button
+              onClick={() => setDisconnectTarget(null)}
+              disabled={isDisconnecting}
+              aria-label="Close modal"
+              style={{
+                position: "absolute",
+                top: 10,
+                right: 10,
+                width: 30,
+                height: 30,
+                minWidth: 30,
+                minHeight: 30,
+                borderRadius: 999,
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(255,255,255,0.03)",
+                color: "rgba(255,255,255,0.72)",
+                fontSize: 18,
+                lineHeight: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+                cursor: isDisconnecting ? "not-allowed" : "pointer",
+                opacity: isDisconnecting ? 0.55 : 1,
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            >
+              ×
+            </button>
+            <h3
+              style={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 22,
+                lineHeight: 1.2,
+                color: "#f0ede8",
+                margin: "0 0 10px",
+                paddingRight: 36,
+              }}
+            >
+              Disconnect {disconnectPlatformLabel}?
+            </h3>
+            <p
+              style={{
+                fontSize: 14,
+                color: "rgba(255,255,255,0.58)",
+                lineHeight: 1.5,
+                margin: "0 0 26px",
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            >
+              Disconnect keeps quick reconnect. Reset connection asks for fresh auth on next connect.
+            </p>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                gap: isMobile ? 6 : 8,
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                onClick={handleYesDisconnect}
+                disabled={isDisconnecting}
+                style={{
+                  ...btnWhite,
+                  flex: "0 0 auto",
+                  padding: isMobile ? "10px 14px" : "10px 20px",
+                  fontSize: isMobile ? 13 : 14,
+                  fontWeight: 500,
+                  whiteSpace: "nowrap",
+                  borderRadius: 8,
+                  color: "#0a0a0b",
+                  opacity: isDisconnecting ? 0.6 : 1,
+                  cursor: isDisconnecting ? "not-allowed" : "pointer",
+                }}
+              >
+                {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+              </button>
+              <button
+                onClick={handleResetConnection}
+                disabled={isDisconnecting}
+                style={{
+                  ...btnWhite,
+                  flex: "0 0 auto",
+                  padding: isMobile ? "10px 14px" : "10px 20px",
+                  fontSize: isMobile ? 13 : 14,
+                  fontWeight: 500,
+                  whiteSpace: "nowrap",
+                  borderRadius: 8,
+                  background: "#e8c547",
+                  color: "#0a0a0b",
+                  opacity: isDisconnecting ? 0.7 : 1,
+                  cursor: isDisconnecting ? "not-allowed" : "pointer",
+                }}
+              >
+                {isDisconnecting ? "Resetting..." : "Reset connection"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
