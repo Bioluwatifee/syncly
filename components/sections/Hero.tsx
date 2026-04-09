@@ -40,18 +40,6 @@ export default function Hero() {
       <div className="orb-2" style={{ position: "absolute", width: 400, height: 400, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(232,95,71,0.1) 0%, transparent 70%)", bottom: -100, right: -100, animation: "drift 9s ease-in-out infinite alternate-reverse", pointerEvents: "none" }} />
       <div className="orb-3" style={{ position: "absolute", width: 300, height: 300, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(30,215,96,0.08) 0%, transparent 70%)", top: "50%", left: "60%", animation: "drift 15s ease-in-out infinite alternate", pointerEvents: "none" }} />
 
-      {/* Vinyl */}
-      <div className="vinyl-container" style={{ position: "absolute", right: -80, top: "50%", transform: "translateY(-50%)", opacity: 0.15, pointerEvents: "none" }}>
-        <div style={{
-          width: 400, height: 400, borderRadius: "50%",
-          background: "conic-gradient(from 0deg, #1a1a1a 0deg, #2a2a2a 5deg, #1a1a1a 10deg, #252525 15deg, #1a1a1a 20deg, #2a2a2a 25deg, #1a1a1a 30deg, #252525 35deg, #1a1a1a 40deg)",
-          animation: "spin 8s linear infinite",
-          position: "relative",
-        }}>
-          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 80, height: 80, background: "#1a1a1a", borderRadius: "50%", border: "2px solid #333" }} />
-        </div>
-      </div>
-
       {/* Badge */}
       <div style={{
         display: "inline-flex", alignItems: "center", gap: 8,

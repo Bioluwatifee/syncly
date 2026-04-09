@@ -2,7 +2,7 @@
 
 export default function EarlyAccessSection() {
   return (
-    <section className="early-access-section" style={{ padding: "0 60px 100px" }}>
+    <section className="early-access-section" style={{ padding: "0 60px 100px", maxWidth: 1100, margin: "0 auto" }}>
       <div className="early-access-inner" style={{
         background: "var(--surface)",
         border: "1px solid rgba(232,197,71,0.18)",
@@ -48,15 +48,6 @@ export default function EarlyAccessSection() {
         >
           Get Early Access
         </a>
-
-        {/* Waveform */}
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 60, pointerEvents: "none" }} aria-hidden="true">
-          <svg viewBox="0 0 800 80" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
-            <g fill="none" stroke="rgba(232,197,71,0.15)" strokeWidth="1.5">
-              <polyline points="0,40 40,20 80,55 120,15 160,50 200,25 240,45 280,10 320,50 360,30 400,48 440,18 480,52 520,22 560,46 600,12 640,50 680,28 720,44 760,20 800,40" />
-            </g>
-          </svg>
-        </div>
       </div>
     </section>
   );
