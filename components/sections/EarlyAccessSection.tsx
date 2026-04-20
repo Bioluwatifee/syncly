@@ -5,7 +5,7 @@ export default function EarlyAccessSection() {
     <section className="early-access-section" style={{ padding: "0 60px 100px", maxWidth: 1100, margin: "0 auto" }}>
       <div className="early-access-inner" style={{
         background: "var(--surface)",
-        border: "1px solid rgba(232,197,71,0.18)",
+        border: "1px solid rgba(255,255,255,0.07)",
         borderRadius: 32, padding: "90px 60px",
         textAlign: "center", position: "relative", overflow: "hidden",
       }}>

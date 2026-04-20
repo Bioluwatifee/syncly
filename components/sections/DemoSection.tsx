@@ -211,7 +211,7 @@ export default function DemoSection() {
         background: "#131316",
         borderRadius: 24,
         padding: "36px 36px 32px",
-        border: "1px solid rgba(255,255,255,0.06)",
+        border: "1px solid rgba(255,255,255,0.07)",
         boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
         position: "relative",
       }}>
