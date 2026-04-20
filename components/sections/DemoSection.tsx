@@ -1,4 +1,5 @@
 "use client";
+import CheckMarkIcon from "@/components/ui/CheckMarkIcon";
 
 // ─── DemoSection ──────────────────────────────────────────────────────────────
 // Static preview of the transfer experience, styled identically to /transfer.
@@ -23,9 +24,7 @@ const CheckIcon = () => (
     width: 26, height: 26, borderRadius: "50%", background: "#1ed760",
     display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
   }}>
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12"/>
-    </svg>
+    <CheckMarkIcon size={13} color="#0a0a0b" />
   </div>
 );
 
@@ -69,10 +68,10 @@ function StaticPlatformInput({ icon, label, connectedBg, connectedColor }: Stati
         fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14,
         whiteSpace: "nowrap", flexShrink: 0,
         borderRadius: "0 13px 13px 0",
-        display: "flex", alignItems: "center",
+        display: "flex", alignItems: "center", gap: 6,
         overflow: "hidden",
       }}>
-        Connected ✓
+        Connected <CheckMarkIcon size={12} color={connectedColor} />
       </div>
     </div>
   );

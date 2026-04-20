@@ -36,21 +36,9 @@ export default function Hero() {
       isolation: "isolate",
     }}>
       {/* Background orbs */}
-      <div style={{ position: "absolute", width: 600, height: 600, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(232,197,71,0.12) 0%, transparent 70%)", top: -200, left: -200, animation: "drift 12s ease-in-out infinite alternate", pointerEvents: "none" }} />
-      <div style={{ position: "absolute", width: 400, height: 400, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(232,95,71,0.1) 0%, transparent 70%)", bottom: -100, right: -100, animation: "drift 9s ease-in-out infinite alternate-reverse", pointerEvents: "none" }} />
-      <div style={{ position: "absolute", width: 300, height: 300, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(30,215,96,0.08) 0%, transparent 70%)", top: "50%", left: "60%", animation: "drift 15s ease-in-out infinite alternate", pointerEvents: "none" }} />
-
-      {/* Vinyl */}
-      <div style={{ position: "absolute", right: -80, top: "50%", transform: "translateY(-50%)", opacity: 0.15, pointerEvents: "none" }}>
-        <div style={{
-          width: 400, height: 400, borderRadius: "50%",
-          background: "conic-gradient(from 0deg, #1a1a1a 0deg, #2a2a2a 5deg, #1a1a1a 10deg, #252525 15deg, #1a1a1a 20deg, #2a2a2a 25deg, #1a1a1a 30deg, #252525 35deg, #1a1a1a 40deg)",
-          animation: "spin 8s linear infinite",
-          position: "relative",
-        }}>
-          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 80, height: 80, background: "#1a1a1a", borderRadius: "50%", border: "2px solid #333" }} />
-        </div>
-      </div>
+      <div className="orb-1" style={{ position: "absolute", width: 600, height: 600, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(232,197,71,0.12) 0%, transparent 70%)", top: -200, left: -200, animation: "drift 12s ease-in-out infinite alternate", pointerEvents: "none" }} />
+      <div className="orb-2" style={{ position: "absolute", width: 400, height: 400, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(232,95,71,0.1) 0%, transparent 70%)", bottom: -100, right: -100, animation: "drift 9s ease-in-out infinite alternate-reverse", pointerEvents: "none" }} />
+      <div className="orb-3" style={{ position: "absolute", width: 300, height: 300, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(30,215,96,0.08) 0%, transparent 70%)", top: "50%", left: "60%", animation: "drift 15s ease-in-out infinite alternate", pointerEvents: "none" }} />
 
       {/* Badge */}
       <div style={{
@@ -66,7 +54,7 @@ export default function Hero() {
       </div>
 
       {/* Headline */}
-      <h1 style={{
+      <h1 className="hero-title" style={{
         fontFamily: "'Aleo', serif",
         fontSize: "clamp(52px, 7vw, 96px)",
         fontWeight: 700, lineHeight: 1.0,
@@ -103,7 +91,7 @@ export default function Hero() {
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 16px 40px rgba(232,197,71,0.3)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
         >
-          Get Early Access →
+          Get Early Access
         </a>
         <button
           onClick={() => document.getElementById("how")?.scrollIntoView({ behavior: "smooth" })}
@@ -123,16 +111,16 @@ export default function Hero() {
       </div>
 
       {/* Platform pills — "Works with" on top, pills on one row below */}
-      <div style={{
+      <div className="platforms-row" style={{
         display: "flex", flexDirection: "column", alignItems: "center",
         gap: 10, marginTop: 64, animation: "fadeUp 0.8s 0.4s ease both",
       }}>
-        <span style={{
+        <span className="platforms-label" style={{
           fontSize: 11, color: "var(--muted)", letterSpacing: "1.5px",
           textTransform: "uppercase", fontWeight: 500,
         }}>Works with</span>
 
-        <div style={{
+        <div className="platforms-pills" style={{
           display: "flex", gap: 8, alignItems: "center",
           flexWrap: "nowrap",
         }}>

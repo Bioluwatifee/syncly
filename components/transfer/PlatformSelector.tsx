@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { Platform } from "@/types";
+import CheckMarkIcon from "@/components/ui/CheckMarkIcon";
 
 interface PlatformOption {
   id: Platform;
@@ -40,12 +41,14 @@ interface SideProps {
   connected: boolean;
   onSelect: (p: Platform) => void;
   onConnect: () => Promise<void> | void;
+  onDisconnect?: () => void;
   isMobile: boolean;
 }
 
-function PlatformSide({ label, selected, connected, onSelect, onConnect, isMobile }: SideProps) {
+function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisconnect, isMobile }: SideProps) {
   const [open, setOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [isButtonHovered, setIsButtonHovered] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -65,6 +68,15 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, isMobil
     setConnecting(false);
   }
 
+  function handleActionButton() {
+    if (!selected || connecting) return;
+    if (connected) {
+      onDisconnect?.();
+      return;
+    }
+    void handleConnect();
+  }
+
   const selectedPlatform = PLATFORMS.find(p => p.id === selected);
 
   const brandBg = selected === "spotify" ? "#1ed760"
@@ -80,12 +92,23 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, isMobil
     : selected === "youtube" ? "#ff4444"
     : "#fc3c44";
 
-  const btnBg    = !selected ? "transparent" : connected ? connectedBg : brandBg;
+  const disconnectHoverBg = "rgba(232,95,71,0.22)";
+  const btnBg = !selected
+    ? "transparent"
+    : connected
+      ? (isButtonHovered && onDisconnect ? disconnectHoverBg : connectedBg)
+      : brandBg;
   const btnColor = !selected ? "rgba(255,255,255,0.35)"
-    : connected ? connectedColor
+    : connected
+      ? (isButtonHovered && onDisconnect ? "#e85f47" : connectedColor)
     : selected === "youtube" ? "#fff" : "#000";
-  const btnLabel = connecting ? "Connecting..." : connected ? "Connected ✓" : "Connect";
-  const btnDisabled = !selected || connected || connecting;
+  const showingConnectedState = connected && !(isButtonHovered && onDisconnect);
+  const btnLabel = connecting
+    ? "Connecting..."
+    : connected
+      ? (isButtonHovered && onDisconnect ? "Disconnect" : "Connected")
+      : "Connect";
+  const btnDisabled = !selected || connecting || (connected && !onDisconnect);
 
   return (
     <div className="platform-side" style={{ position: "relative" }} ref={ref}>
@@ -143,7 +166,7 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, isMobil
 
         {/* Connect button */}
         <button
-          onClick={handleConnect}
+          onClick={handleActionButton}
           disabled={btnDisabled}
           style={{
             height: "100%", padding: isMobile ? "0 16px" : "0 18px", border: "none",
@@ -157,8 +180,16 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, isMobil
             display: "flex", alignItems: "center", gap: 7,
             minWidth: isMobile ? 88 : undefined,
           }}
-          onMouseEnter={e => { if (selected && !connected && !connecting) (e.currentTarget as HTMLElement).style.filter = "brightness(1.1)"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.filter = "none"; }}
+          onMouseEnter={e => {
+            setIsButtonHovered(true);
+            if (selected && !connected && !connecting) {
+              (e.currentTarget as HTMLElement).style.filter = "brightness(1.1)";
+            }
+          }}
+          onMouseLeave={e => {
+            setIsButtonHovered(false);
+            (e.currentTarget as HTMLElement).style.filter = "none";
+          }}
         >
           {connecting && (
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
@@ -167,6 +198,7 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, isMobil
             </svg>
           )}
           {btnLabel}
+          {showingConnectedState && <CheckMarkIcon size={11} color={btnColor} />}
         </button>
       </div>
 
@@ -218,6 +250,8 @@ interface Props {
   onToSelect: (p: Platform) => void;
   onFromConnect: () => Promise<void> | void;
   onToConnect: () => Promise<void> | void;
+  onFromDisconnect?: () => void;
+  onToDisconnect?: () => void;
 }
 
 export default function PlatformSelector({
@@ -225,6 +259,7 @@ export default function PlatformSelector({
   fromConnected, toConnected,
   onFromSelect, onToSelect,
   onFromConnect, onToConnect,
+  onFromDisconnect, onToDisconnect,
 }: Props) {
   // useLayoutEffect fires synchronously before paint — eliminates the
   // desktop→mobile flash that useEffect causes on narrow viewports.
@@ -254,6 +289,7 @@ export default function PlatformSelector({
           connected={fromConnected}
           onSelect={onFromSelect}
           onConnect={onFromConnect}
+          onDisconnect={onFromDisconnect}
           isMobile={isMobile}
         />
 
@@ -294,6 +330,7 @@ export default function PlatformSelector({
           connected={toConnected}
           onSelect={onToSelect}
           onConnect={onToConnect}
+          onDisconnect={onToDisconnect}
           isMobile={isMobile}
         />
       </div>

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import ToastProvider from "@/components/ui/ToastProvider";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -8,6 +9,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://synclyy.xyz"),
   title: "Syncly — Move Your Music",
   description:
     "Move entire playlists between Spotify, Apple Music, and YouTube Music in seconds. No lost songs. No starting over.",
@@ -27,7 +29,7 @@ export const metadata: Metadata = {
     description:
       "Move entire playlists between Spotify, Apple Music, and YouTube Music in seconds.",
     type: "website",
-    url: "https://syncly.app",
+    url: "https://synclyy.xyz",
     images: [{ url: "/favicon.ico" }],
   },
   twitter: {
@@ -53,7 +55,9 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <ToastProvider>{children}</ToastProvider>
+      </body>
     </html>
   );
 }

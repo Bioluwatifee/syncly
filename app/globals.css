@@ -1,9 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap');
+@import './mobile.css';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-@import './mobile.css';
 
 :root {
   --bg: #0a0a0b;
@@ -29,7 +29,6 @@ body {
   font-family: 'DM Sans', sans-serif;
   font-weight: 300;
   overflow-x: hidden;
-  cursor: none;
 }
 
 /* ── Grain overlay ── */

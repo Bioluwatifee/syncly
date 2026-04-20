@@ -7,15 +7,17 @@ export interface PlaylistItem {
   id: string;
   name: string;
   owner: string;
-  trackCount: number;
+  trackCount: number | null;
   imageUrl?: string;
 }
 
 interface Props {
   platform: Platform | null;
   connected: boolean;
+  loading?: boolean;
   playlists: PlaylistItem[];
   selectedId: string | null;
+  countLoadingId?: string | null;
   onSelect: (id: string) => void;
 }
 
@@ -25,9 +27,20 @@ const PLATFORM_LABELS: Record<string, string> = {
   apple: "Apple Music",
 };
 
-export default function PlaylistList({ platform, connected, playlists, selectedId, onSelect }: Props) {
+export default function PlaylistList({
+  platform,
+  connected,
+  loading = false,
+  playlists,
+  selectedId,
+  countLoadingId = null,
+  onSelect,
+}: Props) {
   const platformLabel = platform ? PLATFORM_LABELS[platform] : "";
+  const isLoading = connected && loading;
   const hasPlaylists = connected && playlists.length > 0;
+  const showNoPlatformSelectedState = !platform;
+  const showConnectedButEmptyState = Boolean(platform && connected && playlists.length === 0);
 
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -41,7 +54,16 @@ export default function PlaylistList({ platform, connected, playlists, selectedI
   return (
     <div>
       {/* Section header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: isMobile ? "flex-start" : "baseline",
+          flexDirection: isMobile ? "column" : "row",
+          gap: isMobile ? 6 : 0,
+          marginBottom: 20,
+        }}
+      >
         <h2 style={{
           fontFamily: "'Calligraffitti', cursive",
           fontSize: isMobile ? 20 : 28,
@@ -72,9 +94,17 @@ export default function PlaylistList({ platform, connected, playlists, selectedI
         alignItems: hasPlaylists ? "stretch" : "center",
       }}>
 
-        {!hasPlaylists ? (
+        {isLoading ? (
+          <p style={{ fontSize: 14, color: "rgba(255,255,255,0.32)", fontStyle: "italic" }}>
+            Fetching your playlists...
+          </p>
+        ) : !hasPlaylists ? (
           <p style={{ fontSize: 14, color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>
-            Your playlists will appear here...
+            {showNoPlatformSelectedState
+              ? "Your playlists will appear here..."
+              : showConnectedButEmptyState
+                ? "Oops, no playlists yet. Create one and it'll appear here."
+                : "Connect to view your playlists..."}
           </p>
         ) : (
           <>
@@ -86,7 +116,6 @@ export default function PlaylistList({ platform, connected, playlists, selectedI
               .playlist-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
             `}</style>
 
-            {/* Scrollable list */}
             <div
               className="playlist-scroll"
               style={{
@@ -98,6 +127,10 @@ export default function PlaylistList({ platform, connected, playlists, selectedI
             >
               {playlists.map((pl, i) => {
                 const isSelected = pl.id === selectedId;
+                const countLabel =
+                  pl.trackCount === null
+                    ? (isSelected && countLoadingId === pl.id ? "Loading..." : "-")
+                    : `${pl.trackCount} songs`;
                 return (
                   <div
                     key={pl.id}
@@ -105,8 +138,8 @@ export default function PlaylistList({ platform, connected, playlists, selectedI
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      gap: 16,
-                      padding: "14px 20px",
+                      gap: isMobile ? 12 : 16,
+                      padding: isMobile ? "12px 14px" : "14px 20px",
                       cursor: "pointer",
                       borderBottom: i < playlists.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
                       border: isSelected ? "1px solid rgba(232,197,71,0.7)" : undefined,
@@ -120,7 +153,7 @@ export default function PlaylistList({ platform, connected, playlists, selectedI
                   >
                     {/* Artwork */}
                     <div style={{
-                      width: 52, height: 52, borderRadius: 8, flexShrink: 0,
+                      width: isMobile ? 46 : 52, height: isMobile ? 46 : 52, borderRadius: 8, flexShrink: 0,
                       overflow: "hidden", background: "rgba(255,255,255,0.08)",
                     }}>
                       {pl.imageUrl ? (
@@ -133,20 +166,20 @@ export default function PlaylistList({ platform, connected, playlists, selectedI
                     {/* Info */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{
-                        fontSize: 15, fontWeight: 600, color: "#fff",
+                        fontSize: isMobile ? 14 : 15, fontWeight: 600, color: "#fff",
                         whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                         marginBottom: 3,
                       }}>
                         {pl.name}
                       </div>
-                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
+                      <div style={{ fontSize: isMobile ? 12 : 13, color: "rgba(255,255,255,0.4)" }}>
                         {pl.owner}
                       </div>
                     </div>
 
                     {/* Track count */}
-                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
-                      {pl.trackCount} songs
+                    <div style={{ fontSize: isMobile ? 12 : 13, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+                      {countLabel}
                     </div>
                   </div>
                 );
