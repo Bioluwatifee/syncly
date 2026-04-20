@@ -9,6 +9,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://synclyy.xyz"),
   title: "Syncly — Move Your Music",
   description:
     "Move entire playlists between Spotify, Apple Music, and YouTube Music in seconds. No lost songs. No starting over.",
@@ -28,7 +29,7 @@ export const metadata: Metadata = {
     description:
       "Move entire playlists between Spotify, Apple Music, and YouTube Music in seconds.",
     type: "website",
-    url: "https://syncly.app",
+    url: "https://synclyy.xyz",
     images: [{ url: "/favicon.ico" }],
   },
   twitter: {
