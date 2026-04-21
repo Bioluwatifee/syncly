@@ -193,7 +193,7 @@ export default function DemoSection() {
         marginBottom: 16,
         color: "#fff",
       }}>
-        Built for music lovers,<br />not for engineers.
+        Built for music lovers.
       </h2>
 
       <p className="demo-subtitle" style={{
