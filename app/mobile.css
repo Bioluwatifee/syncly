@@ -53,9 +53,9 @@ html, body {
 /* ─── Hero ───────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .hero {
-    padding: 104px 24px 56px !important;
-    padding-top: max(104px, calc(76px + env(safe-area-inset-top))) !important;
-    min-height: 100svh;
+    padding: 92px 24px 40px !important;
+    padding-top: max(92px, calc(64px + env(safe-area-inset-top))) !important;
+    min-height: auto;
   }
 
   .vinyl-container {
