@@ -31,7 +31,7 @@ export default function Hero() {
       display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
       textAlign: "center",
-      padding: "140px 60px 80px",
+      padding: "142px 60px 80px",
       position: "relative", overflow: "hidden",
       isolation: "isolate",
     }}>
@@ -39,19 +39,6 @@ export default function Hero() {
       <div className="orb-1" style={{ position: "absolute", width: 600, height: 600, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(232,197,71,0.12) 0%, transparent 70%)", top: -200, left: -200, animation: "drift 12s ease-in-out infinite alternate", pointerEvents: "none" }} />
       <div className="orb-2" style={{ position: "absolute", width: 400, height: 400, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(232,95,71,0.1) 0%, transparent 70%)", bottom: -100, right: -100, animation: "drift 9s ease-in-out infinite alternate-reverse", pointerEvents: "none" }} />
       <div className="orb-3" style={{ position: "absolute", width: 300, height: 300, borderRadius: "50%", filter: "blur(120px)", background: "radial-gradient(circle, rgba(30,215,96,0.08) 0%, transparent 70%)", top: "50%", left: "60%", animation: "drift 15s ease-in-out infinite alternate", pointerEvents: "none" }} />
-
-      {/* Badge */}
-      <div style={{
-        display: "inline-flex", alignItems: "center", gap: 8,
-        background: "rgba(232,197,71,0.08)", border: "1px solid rgba(232,197,71,0.2)",
-        borderRadius: 100, padding: "6px 16px",
-        fontSize: 12, fontWeight: 500, color: "var(--accent)",
-        letterSpacing: 1, textTransform: "uppercase",
-        marginBottom: 32, animation: "fadeUp 0.8s ease both",
-      }}>
-        <div style={{ width: 6, height: 6, background: "var(--accent)", borderRadius: "50%", animation: "pulse 2s ease-in-out infinite" }} />
-        Building in public
-      </div>
 
       {/* Headline */}
       <h1 className="hero-title" style={{

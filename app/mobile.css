@@ -53,8 +53,8 @@ html, body {
 /* ─── Hero ───────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .hero {
-    padding: 120px 24px 64px !important;
-    padding-top: max(130px, calc(90px + env(safe-area-inset-top))) !important;
+    padding: 104px 24px 56px !important;
+    padding-top: max(104px, calc(76px + env(safe-area-inset-top))) !important;
     min-height: 100svh;
   }
 
@@ -77,13 +77,6 @@ html, body {
   }
   .orb-3 {
     display: none !important;
-  }
-
-  /* Badge */
-  .hero-badge {
-    font-size: 11px !important;
-    padding: 5px 14px !important;
-    margin-bottom: 24px !important;
   }
 
   /* Hero H1 only */
@@ -150,7 +143,7 @@ html, body {
 @media (max-width: 768px) {
   /* DemoSection outer wrapper */
   .demo-section {
-    padding: 64px 20px 48px !important;
+    padding: 56px 20px 40px !important;
     max-width: 100% !important;
   }
 
@@ -195,7 +188,7 @@ html, body {
 /* ─── Steps section ──────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .steps-section {
-    padding: 56px 20px 72px !important;
+    padding: 48px 20px 56px !important;
     max-width: 100% !important;
   }
 
@@ -220,7 +213,7 @@ html, body {
 @media (max-width: 768px) {
   .stats-row {
     flex-direction: column !important;
-    margin: 0 20px 72px !important;
+    margin: 0 20px 56px !important;
     gap: 0 !important;
     border-radius: 16px !important;
   }
@@ -238,7 +231,7 @@ html, body {
 /* ─── Early access section ───────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .early-access-section {
-    padding: 0 16px 72px !important;
+    padding: 0 16px 56px !important;
   }
 
   .early-access-inner {
