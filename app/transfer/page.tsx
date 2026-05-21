@@ -470,6 +470,7 @@ export default function TransferPage() {
   const playlistsLoadInFlightRef = useRef(false);
   const playlistCountInFlightRef = useRef(false);
   const lastPlaylistCountFetchAtRef = useRef(0);
+  const playlistListAreaRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     // Keep this as a no-op hydration guard for future use.
@@ -495,6 +496,27 @@ export default function TransferPage() {
     mq.addListener(legacyHandler);
     return () => mq.removeListener(legacyHandler);
   }, [hostReady]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+
+    function handleOutsidePointerDown(event: MouseEvent | TouchEvent) {
+      const container = playlistListAreaRef.current;
+      if (!container) return;
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (!container.contains(target)) {
+        setSelectedId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handleOutsidePointerDown);
+    document.addEventListener("touchstart", handleOutsidePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsidePointerDown);
+      document.removeEventListener("touchstart", handleOutsidePointerDown);
+    };
+  }, [selectedId]);
 
   const isDirectionSupported =
     (fromPlatform === "spotify" && toPlatform === "youtube") ||
@@ -1222,7 +1244,7 @@ export default function TransferPage() {
           <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: isMobile ? "20px 0" : "32px 0" }} />
 
           {/* ── Playlist list + Transfer button (default/connected state) ── */}
-          <div style={{ marginBottom: isMobile ? 20 : 32 }}>
+          <div ref={playlistListAreaRef} style={{ marginBottom: isMobile ? 20 : 32 }}>
             <PlaylistList
               platform={fromPlatform}
               connected={fromConnected}
