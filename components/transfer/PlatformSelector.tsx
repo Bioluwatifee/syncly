@@ -2,12 +2,13 @@
 
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { Platform } from "@/types";
-import CheckMarkIcon from "@/components/ui/CheckMarkIcon";
 
 interface PlatformOption {
   id: Platform;
   label: string;
   icon: React.ReactNode;
+  inputLogo: React.ReactNode;
+  dropdownLogo: React.ReactNode;
   comingSoon?: boolean;
 }
 
@@ -29,10 +30,64 @@ const AppleIcon = () => (
   </svg>
 );
 
+const SpotifyDropdownLogo = () => (
+  <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+    <img
+      src="/platform-logos/spotify-logo.png"
+      alt="Spotify"
+      style={{ height: 28, width: "auto", display: "block" }}
+    />
+  </div>
+);
+
+const SpotifyInputLogo = () => (
+  <img
+    src="/platform-logos/spotify-logo.png"
+    alt="Spotify"
+    style={{ height: 26, width: "auto", display: "block" }}
+  />
+);
+
+const YouTubeInputLogo = () => (
+  <img
+    src="/platform-logos/youtube-music-logo.png"
+    alt="YouTube Music"
+    style={{ height: 24, width: "auto", display: "block" }}
+  />
+);
+
+const AppleInputLogo = () => (
+  <img
+    src="/platform-logos/apple-music-logo.png"
+    alt="Apple Music"
+    style={{ height: 18, width: "auto", display: "block", opacity: 0.9 }}
+  />
+);
+
+const YouTubeDropdownLogo = () => (
+  <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+    <img
+      src="/platform-logos/youtube-music-logo.png"
+      alt="YouTube Music"
+      style={{ height: 26, width: "auto", display: "block" }}
+    />
+  </div>
+);
+
+const AppleDropdownLogo = () => (
+  <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+    <img
+      src="/platform-logos/apple-music-logo.png"
+      alt="Apple Music"
+      style={{ height: 20, width: "auto", display: "block", opacity: 0.9 }}
+    />
+  </div>
+);
+
 const PLATFORMS: PlatformOption[] = [
-  { id: "spotify",  label: "Spotify",       icon: <SpotifyIcon /> },
-  { id: "youtube",  label: "YouTube Music", icon: <YouTubeIcon /> },
-  { id: "apple",    label: "Apple Music",   icon: <AppleIcon />,  comingSoon: true },
+  { id: "spotify",  label: "Spotify",       icon: <SpotifyIcon />, inputLogo: <SpotifyInputLogo />, dropdownLogo: <SpotifyDropdownLogo /> },
+  { id: "youtube",  label: "YouTube Music", icon: <YouTubeIcon />, inputLogo: <YouTubeInputLogo />, dropdownLogo: <YouTubeDropdownLogo /> },
+  { id: "apple",    label: "Apple Music",   icon: <AppleIcon />,   inputLogo: <AppleInputLogo />, dropdownLogo: <AppleDropdownLogo />, comingSoon: true },
 ];
 
 interface SideProps {
@@ -94,11 +149,11 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
 
   const disconnectHoverBg = "rgba(232,95,71,0.22)";
   const btnBg = !selected
-    ? "transparent"
+    ? "rgba(255,255,255,0.03)"
     : connected
       ? (isButtonHovered && onDisconnect ? disconnectHoverBg : connectedBg)
       : brandBg;
-  const btnColor = !selected ? "rgba(255,255,255,0.35)"
+  const btnColor = !selected ? "rgba(255,255,255,0.38)"
     : connected
       ? (isButtonHovered && onDisconnect ? "#e85f47" : connectedColor)
     : selected === "youtube" ? "#fff" : "#000";
@@ -109,6 +164,9 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
       ? (isButtonHovered && onDisconnect ? "Disconnect" : "Connected")
       : "Connect";
   const btnDisabled = !selected || connecting || (connected && !onDisconnect);
+  const buttonWidth = connected
+    ? (isMobile ? 108 : undefined)
+    : (isMobile ? 80 : undefined);
 
   return (
     <div className="platform-side" style={{ position: "relative" }} ref={ref}>
@@ -122,10 +180,15 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
       {/* Unified input + button container */}
       <div
         style={{
-          display: "flex", alignItems: "center", height: isMobile ? 56 : 52,
+          display: "flex", alignItems: "center",
+          width: "100%",
+          maxWidth: isMobile ? "100%" : 324,
+          height: 40,
           background: "rgba(255,255,255,0.05)",
-          border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 14, overflow: "hidden",
+          border: "1px solid rgba(255,255,255,0.12)",
+          borderRadius: 8,
+          padding: 4,
+          gap: 4,
           transition: "border-color 0.2s", userSelect: "none",
         }}
         onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)")}
@@ -136,17 +199,15 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
           onClick={() => !connected && setOpen(o => !o)}
           style={{
             flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "0 14px", height: "100%",
+            padding: "0 12px", height: "100%",
             cursor: connected ? "default" : "pointer", minWidth: 0,
+            borderRadius: 6,
           }}
         >
           <div className="platform-label-inner" style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, overflow: "hidden" }}>
             {selectedPlatform ? (
               <>
-                <span style={{ flexShrink: 0 }}>{selectedPlatform.icon}</span>
-                <span style={{ fontSize: 15, fontWeight: 600, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {selectedPlatform.label}
-                </span>
+                <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>{selectedPlatform.inputLogo}</span>
               </>
             ) : (
               <span style={{ fontSize: 14, color: "rgba(255,255,255,0.35)", whiteSpace: "nowrap" }}>
@@ -161,24 +222,26 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
           )}
         </div>
 
-        {/* Vertical divider */}
-        <div style={{ width: 1, height: 28, background: "rgba(255,255,255,0.1)", flexShrink: 0 }} />
-
         {/* Connect button */}
         <button
           onClick={handleActionButton}
           disabled={btnDisabled}
           style={{
-            height: "100%", padding: isMobile ? "0 16px" : "0 18px", border: "none",
             background: btnBg, color: btnColor,
-            fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14,
+            fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 14,
             cursor: btnDisabled ? "default" : "pointer",
-            opacity: !selected ? 0.4 : 1,
+            opacity: 1,
             transition: "background 0.25s, color 0.25s",
             whiteSpace: "nowrap", flexShrink: 0,
-            borderRadius: "0 13px 13px 0",
-            display: "flex", alignItems: "center", gap: 7,
-            minWidth: isMobile ? 88 : undefined,
+            borderRadius: 6,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: connecting ? 7 : 0,
+            width: buttonWidth,
+            padding: isMobile ? "0 10px" : "0 13.5px",
+            height: isMobile ? 30 : 32,
+            minHeight: 0,
+            minWidth: isMobile ? buttonWidth : undefined,
+            maxWidth: isMobile ? buttonWidth : undefined,
+            border: !selected ? "1px solid rgba(255,255,255,0.08)" : "none",
           }}
           onMouseEnter={e => {
             setIsButtonHovered(true);
@@ -198,7 +261,6 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
             </svg>
           )}
           {btnLabel}
-          {showingConnectedState && <CheckMarkIcon size={11} color={btnColor} />}
         </button>
       </div>
 
@@ -207,9 +269,9 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
         <div style={{
           position: "absolute", top: "calc(100% + 8px)",
           left: 0, right: 0,
-          background: "#222228", border: "1px solid rgba(255,255,255,0.1)",
+          background: "#222228",
           borderRadius: 16, overflow: "hidden", zIndex: 50,
-          boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
+          boxShadow: "0 10px 28px rgba(0,0,0,0.42), 0 2px 8px rgba(0,0,0,0.26)",
         }}>
           {PLATFORMS.map(p => (
             <div
@@ -224,12 +286,22 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
               onMouseEnter={e => { if (!p.comingSoon) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.06)"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                {p.icon}
-                <span style={{ fontSize: 15, fontWeight: 600, color: "#fff" }}>{p.label}</span>
+              <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+                {p.dropdownLogo}
               </div>
               {p.comingSoon && (
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>Coming soon...</span>
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: "rgba(255,255,255,0.35)",
+                    fontStyle: "italic",
+                    alignSelf: "flex-end",
+                    lineHeight: 1,
+                    paddingBottom: 2,
+                  }}
+                >
+                  Coming soon...
+                </span>
               )}
             </div>
           ))}
@@ -268,21 +340,46 @@ export default function PlatformSelector({
   useLayoutEffect(() => {
     const mq = window.matchMedia("(max-width: 600px)");
     setIsMobile(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
+    const handler = (e: MediaQueryListEvent | MediaQueryList) => setIsMobile(e.matches);
+
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", handler as EventListener);
+      return () => mq.removeEventListener("change", handler as EventListener);
+    }
+
+    // Safari fallback (older MediaQueryList API)
+    const legacyHandler = (event: MediaQueryListEvent) => handler(event);
+    mq.addListener(legacyHandler);
+    return () => mq.removeListener(legacyHandler);
   }, []);
 
   return (
     <div>
       {/* From / To labels — hidden on mobile via CSS */}
-      <div className="platform-selector-labels">
+      <div
+        className="platform-selector-labels"
+        style={{
+          display: isMobile ? "none" : "flex",
+          justifyContent: "space-between",
+          marginBottom: 14,
+          width: "100%",
+        }}
+      >
         <span style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px" }}>From</span>
         <span style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px" }}>To</span>
       </div>
 
       {/* Row on desktop, column on mobile — driven by CSS not JS */}
-      <div className="platform-selector-row">
+      <div
+        className="platform-selector-row"
+        style={{
+          display: "flex",
+          flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "stretch" : "center",
+          gap: isMobile ? 20 : 16,
+          width: "100%",
+        }}
+      >
         <PlatformSide
           label="From"
           selected={fromPlatform}
@@ -294,12 +391,21 @@ export default function PlatformSelector({
         />
 
         {/* Swap icon — rotates 90° on mobile to act as a down-arrow between rows */}
-        <div style={{ display: "flex", justifyContent: "center", flexShrink: 0 }}>
+        <div
+          className="platform-swap-wrap"
+          style={{
+            display: isMobile ? "none" : "flex",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
           <div
             className="swap-icon-circle"
             style={{
-              width: 40, height: 40, borderRadius: "50%",
-              border: "1.5px solid rgba(255,255,255,0.25)",
+              width: isMobile ? 34 : 40,
+              height: isMobile ? 34 : 40,
+              borderRadius: "50%",
+              border: isMobile ? "1.25px solid rgba(255,255,255,0.25)" : "1.5px solid rgba(255,255,255,0.25)",
               background: "transparent",
               display: "flex", alignItems: "center", justifyContent: "center",
               cursor: "pointer",
@@ -315,7 +421,7 @@ export default function PlatformSelector({
               (e.currentTarget as HTMLElement).style.transform = isMobile ? "rotate(90deg)" : "rotate(0deg)";
             }}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width={isMobile ? 16 : 18} height={isMobile ? 16 : 18} viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8 3L4 7l4 4" />
               <path d="M4 7h16" />
               <path d="M16 21l4-4-4-4" />

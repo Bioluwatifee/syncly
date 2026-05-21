@@ -76,8 +76,27 @@ function isSecure(request: NextRequest): boolean {
   return request.nextUrl.protocol === "https:" || process.env.NODE_ENV === "production";
 }
 
+function getCanonicalAppOrigin(request: NextRequest): string {
+  const candidates = [
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.NEXTAUTH_URL,
+    request.nextUrl.origin,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      return new URL(candidate).origin;
+    } catch {
+      // Ignore malformed env values and continue fallback chain.
+    }
+  }
+
+  return request.nextUrl.origin;
+}
+
 function withAuthResultPath(request: NextRequest, returnPath: string, authValue: string, reason?: string): URL {
-  const redirectUrl = new URL(returnPath, request.nextUrl.origin);
+  const redirectUrl = new URL(returnPath, getCanonicalAppOrigin(request));
   redirectUrl.searchParams.set("auth", authValue);
   if (reason) {
     redirectUrl.searchParams.set("reason", reason);
@@ -151,6 +170,9 @@ async function beginOAuthFlow(
     }
 
     const response = NextResponse.redirect(authUrl);
+    // Always start Spotify OAuth from a clean local cookie state to avoid stale
+    // token/nonce loops after account switches or expired sessions.
+    clearTokenCookies(response, request, "spotify");
     response.cookies.set(`syncly_oauth_state_${platform}`, nonce, {
       ...COOKIE_CONFIG,
       secure,

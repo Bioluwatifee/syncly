@@ -389,9 +389,15 @@ html, body {
 
 @media (max-width: 600px) {
   .platform-selector-labels { display: none; }
-  .platform-selector-row    { flex-direction: column !important; align-items: stretch !important; width: 100% !important; }
+  .platform-selector-row    {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    width: 100% !important;
+    gap: 20px !important;
+  }
   .platform-selector-row > * { width: 100% !important; }
   .platform-side            { flex: none !important; width: 100% !important; }
+  .platform-swap-wrap       { display: none !important; }
 }
 
 /* ─── DemoSection: platform row stacks vertically on mobile ─────────────── */
@@ -416,6 +422,7 @@ html, body {
   /* Rotate swap icon to point vertically */
   .platform-selector-row .swap-icon-circle {
     transform: rotate(90deg) !important;
+    margin: 2px auto !important;
   }
 }
 

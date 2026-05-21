@@ -112,6 +112,7 @@ export default function ToastProvider({ children }: { children: React.ReactNode 
               borderRadius: 12,
               boxShadow: "0 14px 40px rgba(0,0,0,0.45)",
               backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
               padding: "12px 12px 12px 11px",
               display: "flex",
               alignItems: "flex-start",

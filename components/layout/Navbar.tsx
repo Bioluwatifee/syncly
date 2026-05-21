@@ -16,9 +16,16 @@ export default function Navbar() {
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 768px)");
     setIsMobile(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
+    const handler = (e: MediaQueryListEvent | MediaQueryList) => setIsMobile(e.matches);
+
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", handler as EventListener);
+      return () => mq.removeEventListener("change", handler as EventListener);
+    }
+
+    const legacyHandler = (event: MediaQueryListEvent) => handler(event);
+    mq.addListener(legacyHandler);
+    return () => mq.removeListener(legacyHandler);
   }, []);
 
   // Lock body scroll when mobile menu is open

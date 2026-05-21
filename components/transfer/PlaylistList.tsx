@@ -46,9 +46,16 @@ export default function PlaylistList({
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 600px)");
     setIsMobile(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
+    const handler = (e: MediaQueryListEvent | MediaQueryList) => setIsMobile(e.matches);
+
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", handler as EventListener);
+      return () => mq.removeEventListener("change", handler as EventListener);
+    }
+
+    const legacyHandler = (event: MediaQueryListEvent) => handler(event);
+    mq.addListener(legacyHandler);
+    return () => mq.removeListener(legacyHandler);
   }, []);
 
   return (
@@ -66,10 +73,10 @@ export default function PlaylistList({
       >
         <h2 style={{
           fontFamily: "'Calligraffitti', cursive",
-          fontSize: isMobile ? 20 : 28,
+          fontSize: isMobile ? 16 : 24,
           fontWeight: 400,
-          color: "rgba(255,255,255,0.5)",
-          letterSpacing: "0.5px",
+          color: "rgba(255,255,255,0.9)",
+          letterSpacing: "0.1px",
         }}>
           {connected && platform ? `${platformLabel} playlists...` : "Your Playlists"}
         </h2>

@@ -8,7 +8,11 @@ import { useToast } from "@/components/ui/ToastProvider";
 import CheckMarkIcon from "@/components/ui/CheckMarkIcon";
 
 const SPOTIFY_PLAYLIST_COUNT_CACHE_KEY = "syncly_spotify_playlist_count_cache_v2";
+const YOUTUBE_PLAYLIST_COUNT_CACHE_KEY = "syncly_youtube_playlist_count_cache_v1";
 const SPOTIFY_FORCE_FRESH_AUTH_KEY = "syncly_force_spotify_fresh_auth_once";
+const PLAYLIST_COUNT_CACHE_TTL_MS = 15 * 60 * 1000;
+const PLAYLIST_COUNT_MIN_GAP_MS = 1000;
+const PLAYLIST_COUNT_COOLDOWN_MS = 5 * 60 * 1000;
 
 interface TrackResult {
   id: string;
@@ -17,6 +21,15 @@ interface TrackResult {
   imageUrl?: string;
   status: "success" | "failed" | "pending";
   failureReason?: string;
+}
+
+interface SourceTrack {
+  id: string;
+  name: string;
+  artist: string;
+  album: string;
+  durationMs: number;
+  imageUrl?: string;
 }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
@@ -445,15 +458,18 @@ export default function TransferPage() {
   const [youtubeAccountConnected, setYoutubeAccountConnected] = useState(false);
   const [hasLoadedSpotifyPlaylists, setHasLoadedSpotifyPlaylists] = useState(false);
   const [hasAttemptedSpotifyLoad, setHasAttemptedSpotifyLoad] = useState(false);
-  const [playlistCountLoadingId, setPlaylistCountLoadingId] = useState<string | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<"spotify" | "youtube" | null>(null);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [hostReady, setHostReady] = useState(true);
+  const [isPreparingTransfer, setIsPreparingTransfer] = useState(false);
+  const [sourceTracks, setSourceTracks] = useState<SourceTrack[]>([]);
+  const [playlistCountLoadingId, setPlaylistCountLoadingId] = useState<string | null>(null);
+  const [playlistCountCooldownUntil, setPlaylistCountCooldownUntil] = useState(0);
   // Tracks whether the user has already used their one retry
   const [hasRetried,    setHasRetried]    = useState(false);
   const playlistsLoadInFlightRef = useRef(false);
-  const countHydrationInFlightRef = useRef(false);
-  const hydratedPlaylistIdsRef = useRef<Set<string>>(new Set());
+  const playlistCountInFlightRef = useRef(false);
+  const lastPlaylistCountFetchAtRef = useRef(0);
 
   useEffect(() => {
     // Keep this as a no-op hydration guard for future use.
@@ -468,9 +484,16 @@ export default function TransferPage() {
 
     const mq = window.matchMedia("(max-width: 600px)");
     setIsMobile(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
+    const handler = (e: MediaQueryListEvent | MediaQueryList) => setIsMobile(e.matches);
+
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", handler as EventListener);
+      return () => mq.removeEventListener("change", handler as EventListener);
+    }
+
+    const legacyHandler = (event: MediaQueryListEvent) => handler(event);
+    mq.addListener(legacyHandler);
+    return () => mq.removeListener(legacyHandler);
   }, [hostReady]);
 
   const isDirectionSupported =
@@ -478,35 +501,74 @@ export default function TransferPage() {
     (fromPlatform === "youtube" && toPlatform === "spotify");
   const canTransfer = fromConnected && toConnected && selectedId !== null && isDirectionSupported;
 
+  function getCountCacheKey(platform: "spotify" | "youtube") {
+    return platform === "spotify"
+      ? SPOTIFY_PLAYLIST_COUNT_CACHE_KEY
+      : YOUTUBE_PLAYLIST_COUNT_CACHE_KEY;
+  }
+
+  function readPlaylistCountCache(platform: "spotify" | "youtube"): Record<string, number> {
+    if (typeof window === "undefined") return {};
+
+    try {
+      const raw = window.localStorage.getItem(getCountCacheKey(platform));
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as { timestamp?: number; counts?: Record<string, unknown> };
+      if (!parsed || typeof parsed.timestamp !== "number" || !parsed.counts) return {};
+
+      if (Date.now() - parsed.timestamp > PLAYLIST_COUNT_CACHE_TTL_MS) {
+        window.localStorage.removeItem(getCountCacheKey(platform));
+        return {};
+      }
+
+      const normalized: Record<string, number> = {};
+      for (const [playlistId, value] of Object.entries(parsed.counts)) {
+        if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+          normalized[playlistId] = Math.trunc(value);
+        }
+      }
+      return normalized;
+    } catch {
+      return {};
+    }
+  }
+
+  function writePlaylistCountCache(
+    platform: "spotify" | "youtube",
+    playlistId: string,
+    count: number
+  ) {
+    if (typeof window === "undefined") return;
+    if (!Number.isFinite(count) || count < 0) return;
+
+    try {
+      const cacheKey = getCountCacheKey(platform);
+      const existingRaw = window.localStorage.getItem(cacheKey);
+      const existing = existingRaw
+        ? (JSON.parse(existingRaw) as { timestamp?: number; counts?: Record<string, number> })
+        : { timestamp: Date.now(), counts: {} };
+      const mergedCounts: Record<string, number> = { ...(existing.counts ?? {}) };
+      mergedCounts[playlistId] = Math.trunc(count);
+      const payload = {
+        timestamp: Date.now(),
+        counts: mergedCounts,
+      };
+      window.localStorage.setItem(cacheKey, JSON.stringify(payload));
+    } catch {
+      // Ignore storage failures for MVP stability.
+    }
+  }
+
   const loadSourcePlaylists = useCallback(async (sourcePlatform: "spotify" | "youtube") => {
     if (playlistsLoadInFlightRef.current) return;
     playlistsLoadInFlightRef.current = true;
-    hydratedPlaylistIdsRef.current.clear();
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 12_000);
     setIsLoadingPlaylists(true);
     setHasAttemptedSpotifyLoad(true);
     try {
-      const cachedCountById: Record<string, number> =
-        sourcePlatform === "spotify" && typeof window !== "undefined"
-          ? (() => {
-              try {
-                const raw = window.localStorage.getItem(SPOTIFY_PLAYLIST_COUNT_CACHE_KEY);
-                if (!raw) return {};
-                const parsed = JSON.parse(raw) as Record<string, unknown>;
-                const normalized: Record<string, number> = {};
-                for (const [key, value] of Object.entries(parsed)) {
-                  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-                    normalized[key] = Math.trunc(value);
-                  }
-                }
-                return normalized;
-              } catch {
-                return {};
-              }
-            })()
-          : {};
+      const cachedCountById: Record<string, number> = readPlaylistCountCache(sourcePlatform);
 
       const response = await fetch(`/api/${sourcePlatform}?resource=playlists`, {
         cache: "no-store",
@@ -520,6 +582,8 @@ export default function TransferPage() {
           setPlaylists([]);
           setSelectedId(null);
           setPlaylistCountLoadingId(null);
+          setPlaylistCountCooldownUntil(0);
+          playlistCountInFlightRef.current = false;
           setHasLoadedSpotifyPlaylists(false);
           if (sourcePlatform === "spotify") {
             setSpotifyAccountConnected(false);
@@ -625,7 +689,7 @@ export default function TransferPage() {
 
       if (authResult?.endsWith("_error")) {
         const fallback = "Authentication failed. Please try again.";
-        const message = reason ? `Authentication failed: ${reason.replaceAll("_", " ")}` : fallback;
+        const message = reason ? `Authentication failed: ${reason.split("_").join(" ")}` : fallback;
         notify({
           tone: "error",
           title: "Authentication failed",
@@ -669,6 +733,8 @@ export default function TransferPage() {
           setPlaylists([]);
           setSelectedId(null);
           setPlaylistCountLoadingId(null);
+          setPlaylistCountCooldownUntil(0);
+          playlistCountInFlightRef.current = false;
           setHasLoadedSpotifyPlaylists(false);
         } else if (fromPlatform === "spotify" || fromPlatform === "youtube") {
           shouldLoadSourcePlaylists = true;
@@ -718,139 +784,15 @@ export default function TransferPage() {
     if (!fromConnected) return;
     if (fromPlatform !== "spotify" && fromPlatform !== "youtube") return;
 
-    void loadSourcePlaylists(fromPlatform);
-  }, [fromConnected, fromPlatform, hostReady, loadSourcePlaylists]);
-
-  useEffect(() => {
-    if (!hostReady) return;
-    if (!fromConnected || (fromPlatform !== "spotify" && fromPlatform !== "youtube")) return;
-    if (!selectedId) return;
-
-    const selectedPlaylist = playlists.find((playlist) => playlist.id === selectedId);
-    if (!selectedPlaylist || selectedPlaylist.trackCount !== null) return;
-
-    let cancelled = false;
-    const playlistId = selectedId;
-
-    async function loadSelectedPlaylistCount() {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10_000);
-      setPlaylistCountLoadingId(playlistId);
-      try {
-        const response = await fetch(`/api/${fromPlatform}?resource=trackCount&playlistId=${encodeURIComponent(playlistId)}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) return;
-
-        const payload = await response.json();
-        const totalParsed = Number(payload?.total);
-        const resolvedCount =
-          Number.isFinite(totalParsed) && totalParsed >= 0
-            ? Math.trunc(totalParsed)
-            : null;
-
-        if (cancelled || resolvedCount === null) return;
-
-        setPlaylists((prev) =>
-          prev.map((playlist) =>
-            playlist.id === playlistId ? { ...playlist, trackCount: resolvedCount } : playlist
-          )
-        );
-      } catch {
-        // Keep UI responsive; leave count unresolved if this request times out.
-      } finally {
-        clearTimeout(timeoutId);
-        if (!cancelled) {
-          setPlaylistCountLoadingId((current) => (current === playlistId ? null : current));
-        }
-      }
-    }
-
-    void loadSelectedPlaylistCount();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [fromConnected, fromPlatform, hostReady, playlists, selectedId]);
-
-  useEffect(() => {
-    if (!hostReady) return;
-    if (!fromConnected || (fromPlatform !== "spotify" && fromPlatform !== "youtube")) return;
-    if (isLoadingPlaylists) return;
-    if (playlists.length === 0) return;
-    if (countHydrationInFlightRef.current) return;
-
-    const pendingIds = playlists
-      .filter((playlist) => playlist.trackCount === null && !hydratedPlaylistIdsRef.current.has(playlist.id))
-      .map((playlist) => playlist.id);
-
-    if (pendingIds.length === 0) return;
-
-    let cancelled = false;
-    countHydrationInFlightRef.current = true;
-
-    async function hydrateAllPlaylistCounts() {
-      for (const playlistId of pendingIds) {
-        if (cancelled) break;
-
-        hydratedPlaylistIdsRef.current.add(playlistId);
-
-        try {
-          const response = await fetch(`/api/${fromPlatform}?resource=trackCount&playlistId=${encodeURIComponent(playlistId)}`, {
-            cache: "no-store",
-          });
-
-          if (!response.ok) {
-            const payload = await response.json().catch(() => null);
-            const message = String(payload?.error ?? "").toLowerCase();
-            if (response.status === 429 || message.includes("too many requests") || message.includes("rate limit")) {
-              break;
-            }
-            continue;
-          }
-
-          const payload = await response.json();
-          const totalParsed = Number(payload?.total);
-          const resolvedCount =
-            Number.isFinite(totalParsed) && totalParsed >= 0 ? Math.trunc(totalParsed) : null;
-
-          if (resolvedCount === null) continue;
-
-          setPlaylists((prev) =>
-            prev.map((playlist) =>
-              playlist.id === playlistId ? { ...playlist, trackCount: resolvedCount } : playlist
-            )
-          );
-
-          if (typeof window !== "undefined" && fromPlatform === "spotify") {
-            try {
-              const raw = window.localStorage.getItem(SPOTIFY_PLAYLIST_COUNT_CACHE_KEY);
-              const parsed = raw ? (JSON.parse(raw) as Record<string, number>) : {};
-              parsed[playlistId] = resolvedCount;
-              window.localStorage.setItem(SPOTIFY_PLAYLIST_COUNT_CACHE_KEY, JSON.stringify(parsed));
-            } catch {
-              // Ignore storage failures for MVP stability.
-            }
-          }
-        } catch {
-          // Ignore transient per-playlist failures.
-        }
-
-        // Gentle pacing to avoid triggering Spotify rate limits.
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
-
-      countHydrationInFlightRef.current = false;
-    }
-
-    void hydrateAllPlaylistCounts();
-
-    return () => {
-      cancelled = true;
-      countHydrationInFlightRef.current = false;
-    };
-  }, [fromConnected, fromPlatform, hostReady, isLoadingPlaylists, playlists]);
+    void loadSourcePlaylists(fromPlatform).catch((error) => {
+      const message = error instanceof Error ? error.message : "Unable to fetch playlists.";
+      notify({
+        tone: "error",
+        title: "Could not load playlists",
+        description: message,
+      });
+    });
+  }, [fromConnected, fromPlatform, hostReady, loadSourcePlaylists, notify]);
 
   async function handleFromConnect() {
     if (!hostReady) return;
@@ -915,14 +857,86 @@ export default function TransferPage() {
     setPlaylists([]);
     setSelectedId(null);
     setPlaylistCountLoadingId(null);
+    setPlaylistCountCooldownUntil(0);
+    playlistCountInFlightRef.current = false;
     setHasLoadedSpotifyPlaylists(false);
     setHasAttemptedSpotifyLoad(false);
-    hydratedPlaylistIdsRef.current.clear();
   }
   function handleToSelect(p: Platform) {
     setToPlatform(p);
     const connected = p === "spotify" ? spotifyAccountConnected : p === "youtube" ? youtubeAccountConnected : false;
     setToConnected(connected);
+  }
+
+  async function fetchPlaylistCountByIntent(playlistId: string) {
+    if (!hostReady) return;
+    if (!fromConnected) return;
+    if (fromPlatform !== "spotify" && fromPlatform !== "youtube") return;
+    if (!playlistId) return;
+    if (playlistCountInFlightRef.current) return;
+
+    const current = playlists.find((playlist) => playlist.id === playlistId);
+    if (!current || current.trackCount !== null) return;
+
+    if (Date.now() < playlistCountCooldownUntil) return;
+
+    playlistCountInFlightRef.current = true;
+    setPlaylistCountLoadingId(playlistId);
+
+    try {
+      const sinceLastFetch = Date.now() - lastPlaylistCountFetchAtRef.current;
+      if (sinceLastFetch < PLAYLIST_COUNT_MIN_GAP_MS) {
+        await new Promise((resolve) => setTimeout(resolve, PLAYLIST_COUNT_MIN_GAP_MS - sinceLastFetch));
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000);
+      const response = await fetch(
+        `/api/${fromPlatform}?resource=trackCount&playlistId=${encodeURIComponent(playlistId)}`,
+        { cache: "no-store", signal: controller.signal }
+      );
+      clearTimeout(timeoutId);
+      lastPlaylistCountFetchAtRef.current = Date.now();
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message = String(payload?.error ?? "").toLowerCase();
+        if (response.status === 429 || message.includes("rate limit") || message.includes("too many")) {
+          const nextCooldownUntil = Date.now() + PLAYLIST_COUNT_COOLDOWN_MS;
+          setPlaylistCountCooldownUntil(nextCooldownUntil);
+          notify({
+            tone: "info",
+            title: "Playlist counts paused",
+            description: "To protect stability, count checks are paused briefly.",
+          });
+        }
+        return;
+      }
+
+      const payload = await response.json();
+      const parsedTotal = Number(payload?.total);
+      if (!Number.isFinite(parsedTotal) || parsedTotal < 0) return;
+
+      const safeCount = Math.trunc(parsedTotal);
+      setPlaylists((prev) =>
+        prev.map((playlist) =>
+          playlist.id === playlistId ? { ...playlist, trackCount: safeCount } : playlist
+        )
+      );
+      writePlaylistCountCache(fromPlatform, playlistId, safeCount);
+    } catch {
+      // Intent fetch is best-effort only.
+    } finally {
+      playlistCountInFlightRef.current = false;
+      setPlaylistCountLoadingId((currentLoadingId) =>
+        currentLoadingId === playlistId ? null : currentLoadingId
+      );
+    }
+  }
+
+  function handlePlaylistSelect(playlistId: string) {
+    setSelectedId(playlistId);
+    void fetchPlaylistCountByIntent(playlistId);
   }
 
   function handleRetry() {
@@ -938,6 +952,91 @@ export default function TransferPage() {
   function handleToDisconnect() {
     if (!toConnected || (toPlatform !== "spotify" && toPlatform !== "youtube")) return;
     setDisconnectTarget(toPlatform);
+  }
+
+  async function handleTransferClick() {
+    if (!canTransfer) return;
+    if (fromPlatform !== "spotify" && fromPlatform !== "youtube") return;
+    if (toPlatform !== "spotify" && toPlatform !== "youtube") return;
+    if (!selectedId) return;
+
+    setIsPreparingTransfer(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20_000);
+
+    try {
+      const response = await fetch("/api/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourcePlatform: fromPlatform,
+          targetPlatform: toPlatform,
+          playlistId: selectedId,
+        }),
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Unable to prepare transfer right now.");
+      }
+
+      const tracks: SourceTrack[] = Array.isArray(payload?.results)
+        ? payload.results
+            .map((track: any) => ({
+              id: String(track?.sourceTrack?.id ?? ""),
+              name: String(track?.sourceTrack?.name ?? ""),
+              artist: String(track?.sourceTrack?.artist ?? ""),
+              album: String(track?.sourceTrack?.album ?? ""),
+              durationMs: Number.isFinite(Number(track?.sourceTrack?.durationMs))
+                ? Math.trunc(Number(track.sourceTrack.durationMs))
+                : 0,
+              imageUrl: track?.sourceTrack?.imageUrl ? String(track.sourceTrack.imageUrl) : undefined,
+            }))
+            .filter((track: SourceTrack) => Boolean(track.id && track.name))
+        : [];
+
+      setSourceTracks(tracks);
+
+      if (tracks.length === 0) {
+        notify({
+          tone: "info",
+          title: "No tracks found",
+          description: "This playlist has no transferable tracks yet.",
+        });
+        return;
+      }
+
+      notify({
+        tone: "success",
+        title: "Transfer prepared",
+        description:
+          typeof payload?.matchedCount === "number" && typeof payload?.failedCount === "number"
+            ? `${payload.matchedCount} matched, ${payload.failedCount} unmatched.`
+            : `${tracks.length} track${tracks.length === 1 ? "" : "s"} ready.`,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        notify({
+          tone: "error",
+          title: "Request timed out",
+          description: "Track fetch took too long. Please try again.",
+        });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : "Unable to fetch tracks right now.";
+      notify({
+        tone: "error",
+        title: "Could not prepare transfer",
+        description: message,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+      setIsPreparingTransfer(false);
+    }
   }
 
   async function disconnectPlatformConnection({ requireFreshAuth = false }: { requireFreshAuth?: boolean } = {}) {
@@ -965,9 +1064,10 @@ export default function TransferPage() {
         setPlaylists([]);
         setSelectedId(null);
         setPlaylistCountLoadingId(null);
+        setPlaylistCountCooldownUntil(0);
+        playlistCountInFlightRef.current = false;
         setHasLoadedSpotifyPlaylists(false);
         setHasAttemptedSpotifyLoad(false);
-        hydratedPlaylistIdsRef.current.clear();
         if (requireFreshAuth && typeof window !== "undefined") {
           try {
             window.localStorage.setItem(SPOTIFY_FORCE_FRESH_AUTH_KEY, "1");
@@ -990,9 +1090,10 @@ export default function TransferPage() {
           setPlaylists([]);
           setSelectedId(null);
           setPlaylistCountLoadingId(null);
+          setPlaylistCountCooldownUntil(0);
+          playlistCountInFlightRef.current = false;
           setHasLoadedSpotifyPlaylists(false);
           setHasAttemptedSpotifyLoad(false);
-          hydratedPlaylistIdsRef.current.clear();
         }
         if (toPlatform === "youtube") {
           setToConnected(false);
@@ -1061,7 +1162,7 @@ export default function TransferPage() {
         {/* ── Top bar: back arrow + logo ── */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          marginBottom: isMobile ? 28 : 30,
+          marginBottom: isMobile ? 20 : 22,
         }}>
           <a href="/" style={{
             display: "inline-flex", alignItems: "center",
@@ -1079,33 +1180,27 @@ export default function TransferPage() {
           </a>
 
           <a href="/" style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none", flexShrink: 0 }}>
-            <img src="/favicon-96x96.png" alt="Syncly" width={24} height={24} style={{ display: "block", flexShrink: 0 }} />
+            <img src="/apple-touch-icon.png" alt="Syncly" width={24} height={24} style={{ display: "block", flexShrink: 0, borderRadius: 999 }} />
             <span style={{ fontFamily: "'Aleo', serif", fontSize: 20, fontWeight: 700, letterSpacing: "-0.5px", color: "#f0ede8" }}>
               Syncly
             </span>
           </a>
         </div>
 
-        {/* ── Page headings ── */}
-        <div style={{ marginBottom: isMobile ? 16 : 30 }}>
-          <h1 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 24 : 32, fontWeight: 400, color: "#e8c547", lineHeight: 1.15, marginBottom: 0 }}>
-            Welcome, lets move some playlists.
-          </h1>
-        </div>
-
         {/* ── Main card ── */}
         <div style={{
           background: "#131316", borderRadius: isMobile ? 18 : 24,
           padding: cardPadding,
-          border: "1px solid rgba(255,255,255,0.06)",
-          boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
+          border: "none",
+          boxShadow: "none",
         }} className="transfer-card-inner">
           {/* Platform selector */}
           <h2 style={{
             fontFamily: "'Calligraffitti', cursive",
-            fontSize: isMobile ? 20 : 26,
-            fontWeight: 400, color: "rgba(255,255,255,0.5)",
+            fontSize: isMobile ? 16 : 24,
+            fontWeight: 400, color: "rgba(255,255,255,0.9)",
             marginBottom: isMobile ? 16 : 24,
+            letterSpacing: "0.1px",
           }}>
             Platform selector
           </h2>
@@ -1135,28 +1230,31 @@ export default function TransferPage() {
               playlists={playlists}
               selectedId={selectedId}
               countLoadingId={playlistCountLoadingId}
-              onSelect={setSelectedId}
+              onSelect={handlePlaylistSelect}
             />
           </div>
 
           <div style={{ display: "flex", justifyContent: isMobile ? "stretch" : "center" }} className="transfer-btn-wrapper">
             <button
-              disabled={!canTransfer}
+              disabled={!canTransfer || isPreparingTransfer}
               style={{
                 width: isMobile ? "100%" : "45%",
                 minWidth: isMobile ? "auto" : 200,
                 padding: isMobile ? "18px 24px" : "16px 24px",
                 borderRadius: 100, border: "none",
-                background: canTransfer ? "#e8c547" : "rgba(255,255,255,0.08)",
-                color: canTransfer ? "#0a0a0b" : "rgba(255,255,255,0.3)",
+                background: canTransfer && !isPreparingTransfer ? "#e8c547" : "rgba(255,255,255,0.08)",
+                color: canTransfer && !isPreparingTransfer ? "#0a0a0b" : "rgba(255,255,255,0.3)",
                 fontFamily: "'DM Sans', sans-serif", fontWeight: 700,
                 fontSize: isMobile ? 17 : 16,
-                cursor: canTransfer ? "pointer" : "not-allowed",
+                cursor: canTransfer && !isPreparingTransfer ? "pointer" : "not-allowed",
                 transition: "transform 0.15s, box-shadow 0.15s",
               }}
               onMouseEnter={e => { if (canTransfer) { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 40px rgba(232,197,71,0.3)"; } }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
-            >Transfer playlist</button>
+              onClick={handleTransferClick}
+            >
+              {isPreparingTransfer ? "Preparing transfer..." : "Transfer playlist"}
+            </button>
           </div>
         </div>
 
@@ -1169,6 +1267,7 @@ export default function TransferPage() {
             inset: 0,
             background: "rgba(0,0,0,0.6)",
             backdropFilter: "blur(3px)",
+            WebkitBackdropFilter: "blur(3px)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

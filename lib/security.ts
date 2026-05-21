@@ -45,20 +45,49 @@ export function checkRateLimit(
 export function isSameOriginMutation(request: NextRequest): boolean {
   const originHeader = request.headers.get("origin");
   const refererHeader = request.headers.get("referer");
-  const requestOrigin = request.nextUrl.origin;
+  const allowedOrigins = new Set<string>();
 
-  if (originHeader) {
-    return originHeader === requestOrigin;
+  const addOrigin = (raw: string | null | undefined) => {
+    if (!raw) return;
+    try {
+      allowedOrigins.add(new URL(raw).origin);
+    } catch {
+      // Ignore malformed values
+    }
+  };
+
+  addOrigin(request.nextUrl.origin);
+  addOrigin(process.env.NEXTAUTH_URL);
+  addOrigin(process.env.NEXT_PUBLIC_APP_URL);
+
+  const vercelUrl = process.env.VERCEL_URL;
+  if (vercelUrl) {
+    addOrigin(vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`);
   }
 
-  if (refererHeader) {
-    try {
-      const refererOrigin = new URL(refererHeader).origin;
-      return refererOrigin === requestOrigin;
-    } catch {
-      return false;
+  const localhostOrigins = Array.from(allowedOrigins).filter((origin) =>
+    origin.includes("localhost") || origin.includes("127.0.0.1")
+  );
+  for (const origin of localhostOrigins) {
+    if (origin.includes("localhost")) {
+      allowedOrigins.add(origin.replace("localhost", "127.0.0.1"));
+    }
+    if (origin.includes("127.0.0.1")) {
+      allowedOrigins.add(origin.replace("127.0.0.1", "localhost"));
     }
   }
 
+  const isAllowed = (raw: string | null): boolean => {
+    if (!raw) return false;
+    try {
+      const candidate = new URL(raw).origin;
+      return allowedOrigins.has(candidate);
+    } catch {
+      return false;
+    }
+  };
+
+  if (isAllowed(originHeader)) return true;
+  if (isAllowed(refererHeader)) return true;
   return false;
 }

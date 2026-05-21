@@ -12,7 +12,7 @@ const nextConfig = {
   async headers() {
     const isProd = process.env.NODE_ENV === "production";
     const scriptSrc = isProd ? "script-src 'self' 'unsafe-inline'" : "script-src 'self' 'unsafe-inline' 'unsafe-eval'";
-    const csp = [
+    const cspParts = [
       "default-src 'self'",
       "base-uri 'self'",
       "object-src 'none'",
@@ -23,8 +23,14 @@ const nextConfig = {
       scriptSrc,
       "connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com",
       "form-action 'self'",
-      "upgrade-insecure-requests",
-    ].join("; ");
+    ];
+
+    // IMPORTANT: never force HTTPS on localhost/127 dev.
+    if (isProd) {
+      cspParts.push("upgrade-insecure-requests");
+    }
+
+    const csp = cspParts.join("; ");
 
     return [
       {
@@ -35,7 +41,6 @@ const nextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()" },
-          { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains; preload" },
         ],
       },
     ];

@@ -246,8 +246,9 @@ async function getYoutubePlaylistTracks(accessToken: string, playlistId: string)
 
     pagesRead += 1;
     pageToken = String(data?.nextPageToken ?? "");
-    // Keep MVP responsive and avoid quota spikes.
-    if (!pageToken || pagesRead >= 20) break;
+    if (!pageToken) break;
+    // Safety guard against bad upstream pagination loops.
+    if (pagesRead >= 200) break;
   }
 
   return tracks;
@@ -304,9 +305,38 @@ export async function GET(request: NextRequest) {
         total: tracks.length,
         tracks,
       };
+    } else if (resource === "search") {
+      const queryValue = request.nextUrl.searchParams.get("query")?.trim();
+      if (!queryValue) {
+        return NextResponse.json({ error: "Please provide query for resource=search." }, { status: 400 });
+      }
+
+      const limit = Number.parseInt(request.nextUrl.searchParams.get("limit") ?? "8", 10);
+      const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 25)) : 8;
+      const query = new URLSearchParams({
+        part: "snippet",
+        type: "video",
+        videoCategoryId: "10",
+        maxResults: String(safeLimit),
+        q: queryValue,
+      });
+      const data = await youtubeRequest(accessToken, `/search?${query.toString()}`);
+      const items = Array.isArray(data?.items) ? data.items : [];
+      payload = {
+        tracks: items
+          .filter((item: any) => item?.id?.videoId && item?.snippet?.title)
+          .map((item: any) => ({
+            id: String(item.id.videoId),
+            name: String(item.snippet.title),
+            artist: String(item?.snippet?.channelTitle ?? "Unknown Artist"),
+            album: "",
+            durationMs: 0,
+            imageUrl: getBestThumbnail(item?.snippet),
+          })),
+      };
     } else {
       return NextResponse.json({
-        message: "YouTube API route is live. Use resource=playlists, resource=trackCount&playlistId=..., or resource=tracks&playlistId=...",
+        message: "YouTube API route is live. Use resource=playlists, resource=trackCount&playlistId=..., resource=tracks&playlistId=..., or resource=search&query=...",
       });
     }
 

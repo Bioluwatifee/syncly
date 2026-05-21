@@ -44,6 +44,12 @@ function setSpotifyCookie(
   });
 }
 
+function clearSpotifyCookies(response: NextResponse, request: NextRequest) {
+  setSpotifyCookie(response, request, spotifyCookies.access, "", 0);
+  setSpotifyCookie(response, request, spotifyCookies.refresh, "", 0);
+  setSpotifyCookie(response, request, spotifyCookies.expiresAt, "", 0);
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -123,6 +129,62 @@ async function spotifyRequest(accessToken: string, endpoint: string) {
   }
 
   return response.json();
+}
+
+async function getSpotifyPlaylistTracks(accessToken: string, playlistId: string) {
+  const tracks: Array<{
+    id: string;
+    name: string;
+    artist: string;
+    album: string;
+    durationMs: number;
+    imageUrl?: string;
+  }> = [];
+
+  const pageSize = 100;
+  let offset = 0;
+  let total: number | null = null;
+  let pagesRead = 0;
+
+  while (true) {
+    const data = await spotifyRequest(
+      accessToken,
+      `/playlists/${playlistId}/tracks?limit=${pageSize}&offset=${offset}`
+    );
+
+    const items = Array.isArray(data?.items) ? data.items : [];
+    const apiTotal = parseTrackCount(data?.total);
+    if (total === null && apiTotal !== null) total = apiTotal;
+
+    for (const item of items) {
+      const track = item?.track;
+      if (!track || !track?.id || !track?.name) continue;
+
+      tracks.push({
+        id: String(track.id),
+        name: String(track.name),
+        artist: Array.isArray(track.artists)
+          ? track.artists.map((artist: any) => String(artist?.name ?? "")).filter(Boolean).join(", ")
+          : "",
+        album: String(track?.album?.name ?? ""),
+        durationMs: Number.isFinite(Number(track?.duration_ms)) ? Math.trunc(Number(track.duration_ms)) : 0,
+        imageUrl: track?.album?.images?.[0]?.url ? String(track.album.images[0].url) : undefined,
+      });
+    }
+
+    pagesRead += 1;
+    offset += items.length;
+
+    if (items.length < pageSize) break;
+    if (total !== null && offset >= total) break;
+    // Safety guard against bad upstream pagination loops.
+    if (pagesRead >= 200) break;
+  }
+
+  return {
+    total: total ?? tracks.length,
+    tracks,
+  };
 }
 
 function parseTrackCount(value: unknown): number | null {
@@ -215,24 +277,35 @@ export async function GET(request: NextRequest) {
       if (!playlistId) {
         return NextResponse.json({ error: "Please provide playlistId for resource=tracks." }, { status: 400 });
       }
-      const data = await spotifyRequest(accessToken, `/playlists/${playlistId}/tracks?limit=100`);
-      const items = Array.isArray(data?.items) ? data.items : [];
+      payload = await getSpotifyPlaylistTracks(accessToken, playlistId);
+    } else if (resource === "search") {
+      const query = request.nextUrl.searchParams.get("query")?.trim();
+      if (!query) {
+        return NextResponse.json({ error: "Please provide query for resource=search." }, { status: 400 });
+      }
+
+      const limit = Number.parseInt(request.nextUrl.searchParams.get("limit") ?? "8", 10);
+      const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 20)) : 8;
+      const endpoint = `/search?type=track&limit=${safeLimit}&q=${encodeURIComponent(query)}`;
+      const data = await spotifyRequest(accessToken, endpoint);
+      const items = Array.isArray(data?.tracks?.items) ? data.tracks.items : [];
       payload = {
-        total: parseTrackCount(data?.total) ?? items.length,
         tracks: items
-          .filter((item: any) => item.track)
-          .map((item: any) => ({
-            id: item.track.id,
-            name: item.track.name,
-            artist: (item.track.artists ?? []).map((artist: any) => artist.name).join(", "),
-            album: item.track.album?.name ?? "",
-            durationMs: item.track.duration_ms ?? 0,
-            imageUrl: item.track.album?.images?.[0]?.url,
+          .filter((track: any) => track?.id && track?.name)
+          .map((track: any) => ({
+            id: String(track.id),
+            name: String(track.name),
+            artist: Array.isArray(track.artists)
+              ? track.artists.map((artist: any) => String(artist?.name ?? "")).filter(Boolean).join(", ")
+              : "",
+            album: String(track?.album?.name ?? ""),
+            durationMs: Number.isFinite(Number(track?.duration_ms)) ? Math.trunc(Number(track.duration_ms)) : 0,
+            imageUrl: track?.album?.images?.[0]?.url ? String(track.album.images[0].url) : undefined,
           })),
       };
     } else {
       return NextResponse.json({
-        message: "Spotify API route is live. Use resource=playlists, resource=trackCount&playlistId=..., or resource=tracks&playlistId=...",
+        message: "Spotify API route is live. Use resource=playlists, resource=trackCount&playlistId=..., resource=tracks&playlistId=..., or resource=search&query=...",
       });
     }
 
@@ -252,7 +325,12 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     if (error instanceof UpstreamApiError) {
       const headers = error.retryAfterSec ? { "Retry-After": String(error.retryAfterSec) } : undefined;
-      return NextResponse.json({ error: error.message }, { status: error.status, headers });
+      const response = NextResponse.json({ error: error.message }, { status: error.status, headers });
+      if (error.status === 401) {
+        // Expired or invalid Spotify session: clear stale cookies so UI can reconnect cleanly.
+        clearSpotifyCookies(response, request);
+      }
+      return response;
     }
 
     if (error instanceof Error && error.message === "Spotify request timed out.") {
