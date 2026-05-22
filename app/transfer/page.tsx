@@ -785,7 +785,7 @@ export default function TransferPage() {
     return () => {
       mounted = false;
     };
-  }, [fromPlatform, hostReady, loadSourcePlaylists, notify, toPlatform]);
+  }, [fromPlatform, hostReady, loadSourcePlaylists, notify]);
 
   useEffect(() => {
     if (!hostReady) return;
@@ -829,6 +829,25 @@ export default function TransferPage() {
       return;
     }
 
+    const alreadyAuthorized =
+      (fromPlatform === "spotify" && spotifyAccountConnected) ||
+      (fromPlatform === "youtube" && youtubeAccountConnected);
+    if (alreadyAuthorized) {
+      setFromConnected(true);
+      setHasAttemptedSpotifyLoad(false);
+      try {
+        await loadSourcePlaylists(fromPlatform);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to fetch playlists.";
+        notify({
+          tone: "error",
+          title: "Could not load playlists",
+          description: message,
+        });
+      }
+      return;
+    }
+
     setHasAttemptedSpotifyLoad(false);
 
     const authUrl = new URL("/api/auth", window.location.origin);
@@ -858,6 +877,19 @@ export default function TransferPage() {
       return;
     }
 
+    const alreadyAuthorized =
+      (toPlatform === "spotify" && spotifyAccountConnected) ||
+      (toPlatform === "youtube" && youtubeAccountConnected);
+    if (alreadyAuthorized) {
+      setToConnected(true);
+      notify({
+        tone: "success",
+        title: `${toPlatform === "spotify" ? "Spotify" : "YouTube Music"} reconnected`,
+        description: "No fresh authorization needed.",
+      });
+      return;
+    }
+
     const authUrl = new URL("/api/auth", window.location.origin);
     authUrl.searchParams.set("action", "connect");
     authUrl.searchParams.set("platform", toPlatform);
@@ -873,6 +905,15 @@ export default function TransferPage() {
   }
 
   function handleFromSelect(p: Platform) {
+    if (toPlatform && p === toPlatform) {
+      notify({
+        tone: "info",
+        title: "Choose a different source",
+        description: "Source and destination platforms must be different.",
+      });
+      return;
+    }
+
     setFromPlatform(p);
     const connected = p === "spotify" ? spotifyAccountConnected : p === "youtube" ? youtubeAccountConnected : false;
     setFromConnected(connected);
@@ -885,6 +926,15 @@ export default function TransferPage() {
     setHasAttemptedSpotifyLoad(false);
   }
   function handleToSelect(p: Platform) {
+    if (fromPlatform && p === fromPlatform) {
+      notify({
+        tone: "info",
+        title: "Choose a different destination",
+        description: "Source and destination platforms must be different.",
+      });
+      return;
+    }
+
     setToPlatform(p);
     const connected = p === "spotify" ? spotifyAccountConnected : p === "youtube" ? youtubeAccountConnected : false;
     setToConnected(connected);
@@ -1061,22 +1111,29 @@ export default function TransferPage() {
     }
   }
 
-  async function disconnectPlatformConnection({ requireFreshAuth = false }: { requireFreshAuth?: boolean } = {}) {
+  async function disconnectPlatformConnection({
+    requireFreshAuth = false,
+    softOnly = false,
+  }: { requireFreshAuth?: boolean; softOnly?: boolean } = {}) {
     if (!disconnectTarget || isDisconnecting) return;
 
     setIsDisconnecting(true);
     try {
-      const response = await fetch(`/api/auth?action=disconnect&platform=${disconnectTarget}`, {
-        method: "POST",
-      });
+      if (!softOnly) {
+        const response = await fetch(`/api/auth?action=disconnect&platform=${disconnectTarget}`, {
+          method: "POST",
+        });
 
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error ?? "Failed to disconnect platform.");
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.error ?? "Failed to disconnect platform.");
+        }
       }
 
       if (disconnectTarget === "spotify") {
-        setSpotifyAccountConnected(false);
+        if (!softOnly) {
+          setSpotifyAccountConnected(false);
+        }
         if (fromPlatform === "spotify") {
           setFromConnected(false);
         }
@@ -1098,15 +1155,25 @@ export default function TransferPage() {
           }
         }
 
-        notify({
-          tone: "success",
-          title: requireFreshAuth ? "Spotify reset" : "Spotify disconnected",
-          description: requireFreshAuth
-            ? "Next Spotify connect will ask for fresh authorization."
-            : "You can reconnect Spotify anytime.",
-        });
+        if (softOnly) {
+          notify({
+            tone: "success",
+            title: "Spotify disconnected",
+            description: "You can reconnect instantly without fresh authorization.",
+          });
+        } else {
+          notify({
+            tone: "success",
+            title: requireFreshAuth ? "Spotify reset" : "Spotify disconnected",
+            description: requireFreshAuth
+              ? "Next Spotify connect will ask for fresh authorization."
+              : "You can reconnect Spotify anytime.",
+          });
+        }
       } else if (disconnectTarget === "youtube") {
-        setYoutubeAccountConnected(false);
+        if (!softOnly) {
+          setYoutubeAccountConnected(false);
+        }
         if (fromPlatform === "youtube") {
           setFromConnected(false);
           setPlaylists([]);
@@ -1123,7 +1190,9 @@ export default function TransferPage() {
         notify({
           tone: "success",
           title: "YouTube Music disconnected",
-          description: "You can reconnect YouTube Music anytime.",
+          description: softOnly
+            ? "You can reconnect instantly without fresh authorization."
+            : "You can reconnect YouTube Music anytime.",
         });
       }
     } catch (error) {
@@ -1140,7 +1209,7 @@ export default function TransferPage() {
   }
 
   function handleYesDisconnect() {
-    void disconnectPlatformConnection({ requireFreshAuth: false });
+    void disconnectPlatformConnection({ requireFreshAuth: false, softOnly: true });
   }
 
   function handleResetConnection() {
