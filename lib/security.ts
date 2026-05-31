@@ -46,6 +46,11 @@ export function isSameOriginMutation(request: NextRequest): boolean {
   const originHeader = request.headers.get("origin");
   const refererHeader = request.headers.get("referer");
   const allowedOrigins = new Set<string>();
+  const isDev = process.env.NODE_ENV !== "production";
+
+  if (isDev) {
+    allowedOrigins.add("http://127.0.0.1:3000");
+  }
 
   const addOrigin = (raw: string | null | undefined) => {
     if (!raw) return;
@@ -56,25 +61,15 @@ export function isSameOriginMutation(request: NextRequest): boolean {
     }
   };
 
-  addOrigin(request.nextUrl.origin);
-  addOrigin(process.env.NEXTAUTH_URL);
-  addOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  if (!isDev) {
+    addOrigin(request.nextUrl.origin);
+    addOrigin(process.env.NEXTAUTH_URL);
+    addOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  }
 
   const vercelUrl = process.env.VERCEL_URL;
   if (vercelUrl) {
     addOrigin(vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`);
-  }
-
-  const localhostOrigins = Array.from(allowedOrigins).filter((origin) =>
-    origin.includes("localhost") || origin.includes("127.0.0.1")
-  );
-  for (const origin of localhostOrigins) {
-    if (origin.includes("localhost")) {
-      allowedOrigins.add(origin.replace("localhost", "127.0.0.1"));
-    }
-    if (origin.includes("127.0.0.1")) {
-      allowedOrigins.add(origin.replace("127.0.0.1", "localhost"));
-    }
   }
 
   const isAllowed = (raw: string | null): boolean => {

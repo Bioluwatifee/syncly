@@ -132,6 +132,22 @@ async function youtubeRequest(accessToken: string, endpoint: string) {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
   });
+  return handleYoutubeResponse(response);
+}
+
+async function youtubeRequestWithInit(accessToken: string, endpoint: string, init: RequestInit) {
+  const response = await fetchWithTimeout(`${YOUTUBE_API_BASE}${endpoint}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(init.headers ?? {}),
+    },
+    cache: "no-store",
+  });
+  return handleYoutubeResponse(response);
+}
+
+async function handleYoutubeResponse(response: Response) {
 
   if (!response.ok) {
     const retryAfterHeader = response.headers.get("retry-after");
@@ -151,7 +167,6 @@ async function youtubeRequest(accessToken: string, endpoint: string) {
 
     throw new UpstreamApiError("YouTube request failed. Please try again.", 502);
   }
-
   return response.json();
 }
 
@@ -266,6 +281,46 @@ async function getYoutubeTrackCount(accessToken: string, playlistId: string) {
   return parseCount(item?.contentDetails?.itemCount);
 }
 
+async function createYoutubePlaylist(accessToken: string, title: string, description?: string) {
+  const payload = await youtubeRequestWithInit(accessToken, "/playlists?part=snippet,status", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      snippet: {
+        title,
+        description: description ?? "",
+      },
+      status: {
+        privacyStatus: "private",
+      },
+    }),
+  });
+
+  return String(payload?.id ?? "");
+}
+
+async function addPlaylistItem(accessToken: string, playlistId: string, videoId: string) {
+  const payload = await youtubeRequestWithInit(accessToken, "/playlistItems?part=snippet", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      snippet: {
+        playlistId,
+        resourceId: {
+          kind: "youtube#video",
+          videoId,
+        },
+      },
+    }),
+  });
+
+  return String(payload?.id ?? "");
+}
+
 export async function GET(request: NextRequest) {
   const resource = request.nextUrl.searchParams.get("resource");
   const ip = getClientIp(request);
@@ -364,5 +419,86 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({ error: "YouTube request failed. Please try again." }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const resource = request.nextUrl.searchParams.get("resource");
+  const ip = getClientIp(request);
+  const limit = checkRateLimit(`youtube:write:${resource ?? "default"}:${ip}`, YOUTUBE_RATE_LIMIT.limit, YOUTUBE_RATE_LIMIT.windowMs);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "YouTube rate limit reached. Please wait a minute and try again." },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } }
+    );
+  }
+
+  try {
+    const { accessToken, refreshed } = await resolveYoutubeAccessToken(request);
+    if (!accessToken) {
+      return NextResponse.json({ error: "YouTube is not connected." }, { status: 401 });
+    }
+
+    let payload: unknown;
+
+    if (resource === "createPlaylist") {
+      const body = (await request.json().catch(() => null)) as { title?: string; description?: string } | null;
+      const title = body?.title?.trim();
+      if (!title) {
+        return NextResponse.json({ error: "Please provide title for resource=createPlaylist." }, { status: 400 });
+      }
+
+      const playlistId = await createYoutubePlaylist(accessToken, title, body?.description);
+      if (!playlistId) {
+        return NextResponse.json({ error: "YouTube did not return a playlist id." }, { status: 502 });
+      }
+
+      payload = { playlistId };
+    } else if (resource === "addPlaylistItem") {
+      const body = (await request.json().catch(() => null)) as { playlistId?: string; videoId?: string } | null;
+      const playlistId = body?.playlistId?.trim();
+      const videoId = body?.videoId?.trim();
+      if (!playlistId || !videoId) {
+        return NextResponse.json(
+          { error: "Please provide playlistId and videoId for resource=addPlaylistItem." },
+          { status: 400 }
+        );
+      }
+
+      const playlistItemId = await addPlaylistItem(accessToken, playlistId, videoId);
+      if (!playlistItemId) {
+        return NextResponse.json({ error: "YouTube did not return a playlist item id." }, { status: 502 });
+      }
+      payload = { playlistItemId };
+    } else {
+      return NextResponse.json({
+        error: "Unsupported write resource. Use resource=createPlaylist or resource=addPlaylistItem.",
+      }, { status: 400 });
+    }
+
+    const response = NextResponse.json(payload);
+    if (refreshed) {
+      setYoutubeCookie(response, request, youtubeCookies.access, refreshed.accessToken, refreshed.expiresIn);
+      setYoutubeCookie(response, request, youtubeCookies.refresh, refreshed.refreshToken, 60 * 60 * 24 * 90);
+      setYoutubeCookie(
+        response,
+        request,
+        youtubeCookies.expiresAt,
+        (Date.now() + refreshed.expiresIn * 1000).toString(),
+        refreshed.expiresIn
+      );
+    }
+    return response;
+  } catch (error) {
+    if (error instanceof UpstreamApiError) {
+      const headers = error.retryAfterSec ? { "Retry-After": String(error.retryAfterSec) } : undefined;
+      return NextResponse.json({ error: error.message }, { status: error.status, headers });
+    }
+
+    if (error instanceof Error && error.message === "YouTube request timed out.") {
+      return NextResponse.json({ error: "YouTube request timed out. Please try again." }, { status: 504 });
+    }
+
+    return NextResponse.json({ error: "YouTube write request failed. Please try again." }, { status: 500 });
   }
 }

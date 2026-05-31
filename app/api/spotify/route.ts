@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, getClientIp } from "@/lib/security";
+import {
+  clearPlatformSession,
+  getPlatformSession,
+  getSessionIdFromRequest,
+  setPlatformSession,
+} from "@/lib/oauth-session";
 
 export const dynamic = "force-dynamic";
 
@@ -13,14 +19,35 @@ const spotifyCookies = {
   expiresAt: "syncly_spotify_expires_at",
 };
 
+function getCanonicalAppOrigin(): string {
+  const fromEnv = process.env.NEXT_PUBLIC_APP_URL?.trim() || process.env.NEXTAUTH_URL?.trim();
+  if (fromEnv) {
+    return fromEnv.replace(/\/+$/, "");
+  }
+  if (process.env.NODE_ENV !== "production") {
+    return "http://127.0.0.1:3000";
+  }
+  return "http://127.0.0.1:3000";
+}
+
+function getCanonicalHostLabel(): string {
+  try {
+    return new URL(getCanonicalAppOrigin()).host;
+  } catch {
+    return "127.0.0.1:3000";
+  }
+}
+
 class UpstreamApiError extends Error {
   status: number;
   retryAfterSec?: number;
+  reason?: string;
 
-  constructor(message: string, status: number, retryAfterSec?: number) {
+  constructor(message: string, status: number, retryAfterSec?: number, reason?: string) {
     super(message);
     this.status = status;
     this.retryAfterSec = retryAfterSec;
+    this.reason = reason;
   }
 }
 
@@ -79,6 +106,10 @@ async function refreshSpotifyToken(refreshToken: string) {
     refresh_token: refreshToken,
   });
 
+  console.log("[spotify:refresh] attempting token refresh", {
+    refreshTokenPresent: Boolean(refreshToken),
+  });
+
   const refreshResponse = await fetchWithTimeout("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: {
@@ -89,13 +120,23 @@ async function refreshSpotifyToken(refreshToken: string) {
   });
 
   if (!refreshResponse.ok) {
+    const details = await refreshResponse.text().catch(() => "");
+    console.error("[spotify:refresh] refresh failed", {
+      status: refreshResponse.status,
+      body: details.slice(0, 400),
+    });
     if (refreshResponse.status === 400 || refreshResponse.status === 401) {
-      throw new UpstreamApiError("Spotify session expired. Please reconnect Spotify.", 401);
+      throw new UpstreamApiError("Spotify session expired. Please reconnect Spotify.", 401, undefined, "refresh_invalid");
     }
     throw new UpstreamApiError("Unable to refresh Spotify session. Please try reconnecting Spotify.", 502);
   }
 
   const tokenData = await refreshResponse.json();
+  console.log("[spotify:refresh] refresh succeeded", {
+    hasAccessToken: Boolean(tokenData?.access_token),
+    hasRefreshToken: Boolean(tokenData?.refresh_token),
+    expiresIn: Number(tokenData?.expires_in ?? 0),
+  });
   return {
     accessToken: tokenData.access_token as string,
     refreshToken: (tokenData.refresh_token as string | undefined) ?? refreshToken,
@@ -104,12 +145,26 @@ async function refreshSpotifyToken(refreshToken: string) {
 }
 
 async function spotifyRequest(accessToken: string, endpoint: string) {
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[spotify:request] start", {
+      endpoint,
+      accessTokenPresent: Boolean(accessToken),
+      accessTokenLength: accessToken?.length ?? 0,
+    });
+  }
   const response = await fetchWithTimeout(`${SPOTIFY_API_BASE}${endpoint}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
   });
 
   if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    console.error("[spotify:request] upstream error", {
+      endpoint,
+      status: response.status,
+      statusText: response.statusText,
+      body: details.slice(0, 600),
+    });
     const retryAfterHeader = response.headers.get("retry-after");
     const retryAfterSec = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : undefined;
 
@@ -118,7 +173,7 @@ async function spotifyRequest(accessToken: string, endpoint: string) {
     }
 
     if (response.status === 401 || response.status === 403) {
-      throw new UpstreamApiError("Spotify session expired. Please reconnect Spotify.", 401);
+      throw new UpstreamApiError("Spotify session expired. Please reconnect Spotify.", 401, undefined, "upstream_unauthorized");
     }
 
     if (response.status >= 500) {
@@ -201,22 +256,75 @@ function parseTrackCount(value: unknown): number | null {
 }
 
 async function resolveSpotifyAccessToken(request: NextRequest) {
+  const sessionId = getSessionIdFromRequest(request);
+  const storeSession = sessionId ? getPlatformSession(sessionId, "spotify") : null;
+
+  const now = Date.now();
+  if (storeSession?.accessToken && storeSession.expiresAt > now + 10_000) {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[spotify:resolve] using server session store access token");
+    }
+    return {
+      accessToken: storeSession.accessToken,
+      refreshed: null as null | { accessToken: string; refreshToken: string; expiresIn: number },
+      refreshToken: storeSession.refreshToken ?? null,
+      sessionId,
+    };
+  }
+
+  if (storeSession?.refreshToken) {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[spotify:resolve] server store token expired/missing; refreshing with store refresh token");
+    }
+    const refreshed = await refreshSpotifyToken(storeSession.refreshToken);
+    return { accessToken: refreshed.accessToken, refreshed, refreshToken: refreshed.refreshToken, sessionId };
+  }
+
   const accessToken = request.cookies.get(spotifyCookies.access)?.value;
   const refreshToken = request.cookies.get(spotifyCookies.refresh)?.value;
   const expiresAtRaw = request.cookies.get(spotifyCookies.expiresAt)?.value;
   const expiresAt = expiresAtRaw ? Number(expiresAtRaw) : 0;
-  const now = Date.now();
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[spotify:resolve] cookie snapshot", {
+      host: getCanonicalHostLabel(),
+      requestHost: request.nextUrl.host,
+      accessTokenPresent: Boolean(accessToken),
+      refreshTokenPresent: Boolean(refreshToken),
+      expiresAt,
+      expiresInSec: expiresAt ? Math.floor((expiresAt - now) / 1000) : null,
+    });
+  }
 
   if (accessToken && expiresAt > now + 10_000) {
-    return { accessToken, refreshed: null as null | { accessToken: string; refreshToken: string; expiresIn: number } };
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[spotify:resolve] using cookie access token");
+    }
+    return {
+      accessToken,
+      refreshed: null as null | { accessToken: string; refreshToken: string; expiresIn: number },
+      refreshToken: refreshToken ?? null,
+      sessionId,
+    };
   }
 
   if (!refreshToken) {
-    return { accessToken: null, refreshed: null as null | { accessToken: string; refreshToken: string; expiresIn: number } };
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("[spotify:resolve] no refresh token available; session considered disconnected");
+    }
+    return {
+      accessToken: null,
+      refreshed: null as null | { accessToken: string; refreshToken: string; expiresIn: number },
+      refreshToken: null,
+      sessionId,
+    };
   }
 
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[spotify:resolve] access token missing/expired; triggering refresh");
+  }
   const refreshed = await refreshSpotifyToken(refreshToken);
-  return { accessToken: refreshed.accessToken, refreshed };
+  return { accessToken: refreshed.accessToken, refreshed, refreshToken: refreshed.refreshToken, sessionId };
 }
 
 export async function GET(request: NextRequest) {
@@ -231,16 +339,46 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { accessToken, refreshed } = await resolveSpotifyAccessToken(request);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[spotify:get] incoming request", {
+        resource,
+        host: getCanonicalHostLabel(),
+        requestHost: request.nextUrl.host,
+        hasCookieHeader: Boolean(request.headers.get("cookie")),
+      });
+    }
+    const { accessToken, refreshed, refreshToken, sessionId } = await resolveSpotifyAccessToken(request);
 
     if (!accessToken) {
       return NextResponse.json({ error: "Spotify is not connected." }, { status: 401 });
     }
 
+    let liveAccessToken = accessToken;
+    let liveRefreshToken = refreshToken;
+    let refreshedAfter401: null | { accessToken: string; refreshToken: string; expiresIn: number } = null;
     let payload: unknown;
 
+    const runWithSpotifyAuth = async <T>(requester: (token: string) => Promise<T>): Promise<T> => {
+      try {
+        return await requester(liveAccessToken);
+      } catch (error) {
+        if (!(error instanceof UpstreamApiError) || error.status !== 401 || !liveRefreshToken) {
+          throw error;
+        }
+
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[spotify:get] received 401 from Spotify API, attempting single token refresh + retry");
+        }
+        const refreshedToken = await refreshSpotifyToken(liveRefreshToken);
+        liveAccessToken = refreshedToken.accessToken;
+        liveRefreshToken = refreshedToken.refreshToken;
+        refreshedAfter401 = refreshedToken;
+        return requester(liveAccessToken);
+      }
+    };
+
     if (resource === "playlists") {
-      const data = await spotifyRequest(accessToken, "/me/playlists?limit=50");
+      const data = await runWithSpotifyAuth((token) => spotifyRequest(token, "/me/playlists?limit=50"));
       const items = Array.isArray(data?.items) ? data.items : [];
       payload = {
         playlists: items.map((item: any) => ({
@@ -257,12 +395,16 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: "Please provide playlistId for resource=trackCount." }, { status: 400 });
       }
 
-      const data = await spotifyRequest(accessToken, `/playlists/${playlistId}/tracks?limit=1`);
+      const data = await runWithSpotifyAuth((token) =>
+        spotifyRequest(token, `/playlists/${playlistId}/tracks?limit=1`)
+      );
       let total = parseTrackCount(data?.total);
 
       if (total === null) {
         try {
-          const details = await spotifyRequest(accessToken, `/playlists/${playlistId}?fields=tracks(total)`);
+          const details = await runWithSpotifyAuth((token) =>
+            spotifyRequest(token, `/playlists/${playlistId}?fields=tracks(total)`)
+          );
           total = parseTrackCount(details?.tracks?.total);
         } catch {
           // Keep null when fallback fails; UI will render "-" gracefully.
@@ -277,7 +419,7 @@ export async function GET(request: NextRequest) {
       if (!playlistId) {
         return NextResponse.json({ error: "Please provide playlistId for resource=tracks." }, { status: 400 });
       }
-      payload = await getSpotifyPlaylistTracks(accessToken, playlistId);
+      payload = await runWithSpotifyAuth((token) => getSpotifyPlaylistTracks(token, playlistId));
     } else if (resource === "search") {
       const query = request.nextUrl.searchParams.get("query")?.trim();
       if (!query) {
@@ -287,7 +429,7 @@ export async function GET(request: NextRequest) {
       const limit = Number.parseInt(request.nextUrl.searchParams.get("limit") ?? "8", 10);
       const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 20)) : 8;
       const endpoint = `/search?type=track&limit=${safeLimit}&q=${encodeURIComponent(query)}`;
-      const data = await spotifyRequest(accessToken, endpoint);
+      const data = await runWithSpotifyAuth((token) => spotifyRequest(token, endpoint));
       const items = Array.isArray(data?.tracks?.items) ? data.tracks.items : [];
       payload = {
         tracks: items
@@ -310,25 +452,37 @@ export async function GET(request: NextRequest) {
     }
 
     const response = NextResponse.json(payload);
-    if (refreshed) {
-      setSpotifyCookie(response, request, spotifyCookies.access, refreshed.accessToken, refreshed.expiresIn);
-      setSpotifyCookie(response, request, spotifyCookies.refresh, refreshed.refreshToken, 60 * 60 * 24 * 90);
+    const effectiveRefresh = refreshedAfter401 ?? refreshed;
+    if (effectiveRefresh) {
+      setSpotifyCookie(response, request, spotifyCookies.access, effectiveRefresh.accessToken, effectiveRefresh.expiresIn);
+      setSpotifyCookie(response, request, spotifyCookies.refresh, effectiveRefresh.refreshToken, 60 * 60 * 24 * 90);
       setSpotifyCookie(
         response,
         request,
         spotifyCookies.expiresAt,
-        (Date.now() + refreshed.expiresIn * 1000).toString(),
-        refreshed.expiresIn
+        (Date.now() + effectiveRefresh.expiresIn * 1000).toString(),
+        effectiveRefresh.expiresIn
       );
+      if (sessionId) {
+        setPlatformSession(sessionId, "spotify", {
+          accessToken: effectiveRefresh.accessToken,
+          refreshToken: effectiveRefresh.refreshToken,
+          expiresAt: Date.now() + effectiveRefresh.expiresIn * 1000,
+        });
+      }
     }
     return response;
   } catch (error) {
     if (error instanceof UpstreamApiError) {
       const headers = error.retryAfterSec ? { "Retry-After": String(error.retryAfterSec) } : undefined;
       const response = NextResponse.json({ error: error.message }, { status: error.status, headers });
-      if (error.status === 401) {
-        // Expired or invalid Spotify session: clear stale cookies so UI can reconnect cleanly.
+      if (error.status === 401 && error.reason === "refresh_invalid") {
+        // Only clear session when refresh token is definitively invalid/expired.
         clearSpotifyCookies(response, request);
+        const sessionId = getSessionIdFromRequest(request);
+        if (sessionId) {
+          clearPlatformSession(sessionId, "spotify");
+        }
       }
       return response;
     }

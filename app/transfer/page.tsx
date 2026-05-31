@@ -23,44 +23,7 @@ interface TrackResult {
   failureReason?: string;
 }
 
-interface SourceTrack {
-  id: string;
-  name: string;
-  artist: string;
-  album: string;
-  durationMs: number;
-  imageUrl?: string;
-}
-
-// ─── Mock data ────────────────────────────────────────────────────────────────
-const MOCK_PLAYLISTS: PlaylistItem[] = [
-  { id: "1", name: "This feels like it",   owner: "Stanye", trackCount: 22, imageUrl: "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=100&h=100&fit=crop" },
-  { id: "2", name: "Green mirage",          owner: "Stanye", trackCount: 22, imageUrl: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=100&h=100&fit=crop" },
-  { id: "3", name: "Moments of nostalgia",  owner: "Elara",  trackCount: 15, imageUrl: "https://images.unsplash.com/photo-1516912481808-3406841bd33c?w=100&h=100&fit=crop" },
-  { id: "4", name: "Chasing the moon",      owner: "Ryder",  trackCount: 10, imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop" },
-];
-
-const MOCK_TRACKS: TrackResult[] = [
-  { id: "t1", name: "Green mirage",         artist: "Stanye", imageUrl: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=100&h=100&fit=crop", status: "success" },
-  { id: "t2", name: "Moments of nostalgia", artist: "Elara",  imageUrl: "https://images.unsplash.com/photo-1516912481808-3406841bd33c?w=100&h=100&fit=crop", status: "success" },
-  { id: "t3", name: "Chasing the moon",     artist: "Ryder",  imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed"  },
-];
-
-// TODO: Replace placeholder reasons with real API error responses when Spotify and YouTube Music OAuth is wired up
-const MOCK_FAILED_TRACKS: TrackResult[] = [
-  { id: "f1", name: "Chasing the moon",     artist: "Ryder", imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed", failureReason: "Not available on YouTube Music" },
-  { id: "f2", name: "Midnight Rain (Demo)", artist: "Taylor Swift", imageUrl: "https://images.unsplash.com/photo-1516912481808-3406841bd33c?w=100&h=100&fit=crop", status: "failed", failureReason: "Explicit version unavailable" },
-  { id: "f3", name: "Golden Hour",          artist: "JVKE", imageUrl: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=100&h=100&fit=crop", status: "failed", failureReason: "Region restricted" },
-  { id: "f4", name: "Levitating",           artist: "Dua Lipa", imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed", failureReason: "Not available on YouTube Music" },
-];
-
-// Subset of failed tracks that still fail after retry (for post-retry partial/error state)
-const MOCK_POST_RETRY_FAILED: TrackResult[] = [
-  { id: "f1", name: "Chasing the moon",     artist: "Ryder", imageUrl: "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=100&h=100&fit=crop", status: "failed", failureReason: "Not available on YouTube Music" },
-  { id: "f3", name: "Golden Hour",          artist: "JVKE", imageUrl: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=100&h=100&fit=crop", status: "failed", failureReason: "Region restricted" },
-];
-
-const SELECTED_PLAYLIST = MOCK_PLAYLISTS[0];
+type TransferViewState = "idle" | "transferring" | "success" | "partial" | "error";
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const SpotifyWordmark = () => (
@@ -171,8 +134,8 @@ function SplitBar({ success, failed, total }: { success: number; failed: number;
 }
 
 // ─── Playlist card (yellow border) ───────────────────────────────────────────
-function PlaylistCard({ retryCount }: { retryCount?: number }) {
-  const count = retryCount ?? SELECTED_PLAYLIST.trackCount;
+function PlaylistCard({ playlist, retryCount }: { playlist: PlaylistItem; retryCount?: number }) {
+  const count = retryCount ?? playlist.trackCount;
   const showRetryLabel = retryCount !== undefined;
   return (
     <div style={{
@@ -182,11 +145,11 @@ function PlaylistCard({ retryCount }: { retryCount?: number }) {
       background: "rgba(232,197,71,0.04)",
     }}>
       <div style={{ width: 48, height: 48, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,0.08)" }}>
-        <img src={SELECTED_PLAYLIST.imageUrl!} alt={SELECTED_PLAYLIST.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        {playlist.imageUrl && <img src={playlist.imageUrl} alt={playlist.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{SELECTED_PLAYLIST.name}</div>
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>{SELECTED_PLAYLIST.owner}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{playlist.name}</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>{playlist.owner}</div>
       </div>
       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", flexShrink: 0, textAlign: "right" }}>
         <span>{count} songs</span>
@@ -273,14 +236,20 @@ function FailedTrackList({ tracks, isMobile, showReasons }: { tracks: TrackResul
 }
 
 // ─── State: Transferring ──────────────────────────────────────────────────────
-function TransferringState({ tracks, total, isMobile, isRetry }: { tracks: TrackResult[]; total: number; isMobile: boolean; isRetry?: boolean }) {
+function TransferringState({
+  tracks,
+  total,
+  isMobile,
+  playlist,
+  isRetry,
+}: { tracks: TrackResult[]; total: number; isMobile: boolean; playlist: PlaylistItem; isRetry?: boolean }) {
   const done = tracks.filter(t => t.status !== "pending").length;
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
         {isRetry ? `Retrying ${total} failed tracks` : "Transferring playlist…"}
       </h2>
-      <PlaylistCard retryCount={isRetry ? total : undefined} />
+      <PlaylistCard playlist={playlist} retryCount={isRetry ? total : undefined} />
       <div style={{ margin: "4px 0" }}>
         {tracks.map((t, i) => (
           <div key={t.id} style={{
@@ -308,7 +277,13 @@ function TransferringState({ tracks, total, isMobile, isRetry }: { tracks: Track
 }
 
 // ─── State: Success ───────────────────────────────────────────────────────────
-function SuccessState({ isMobile }: { isMobile: boolean }) {
+function SuccessState({
+  isMobile,
+  playlist,
+  total,
+  targetPlaylistId,
+  onStartAnother,
+}: { isMobile: boolean; playlist: PlaylistItem; total: number; targetPlaylistId: string | null; onStartAnother: () => void }) {
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
@@ -317,28 +292,45 @@ function SuccessState({ isMobile }: { isMobile: boolean }) {
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "32px 20px" : "48px 32px", textAlign: "center" }}>
         <div style={{ fontSize: isMobile ? 17 : 20, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Playlist successfully transferred</div>
         <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 24 }}>
-          {SELECTED_PLAYLIST.name} by {SELECTED_PLAYLIST.owner}
+          {playlist.name} by {playlist.owner}
         </div>
         <div style={{ marginBottom: 28 }}><PlatformRow /></div>
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
-          <button style={btnWhite}
+          <a
+            href={targetPlaylistId ? `https://music.youtube.com/playlist?list=${targetPlaylistId}` : "https://music.youtube.com"}
+            target="_blank"
+            rel="noreferrer"
+            style={{ ...btnWhite, textDecoration: "none", textAlign: "center" }}
             onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
             onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-          >Open YouTube Music</button>
-          <button style={btnYellow}
+          >Open YouTube Music</a>
+          <button style={btnYellow} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
         </div>
       </div>
-      <ProgressBar done={24} total={24} label="24 out of 24 transferred" />
+      <ProgressBar done={total} total={Math.max(total, 1)} label={`${total} out of ${total} transferred`} />
     </>
   );
 }
 
 // ─── State: Partial Match ─────────────────────────────────────────────────────
-function PartialState({ failedTracks, isMobile, onRetry }: { failedTracks: TrackResult[]; isMobile: boolean; onRetry: () => void }) {
-  const total = 24, transferred = 18;
+function PartialState({
+  failedTracks,
+  isMobile,
+  total,
+  transferred,
+  onRetry,
+  onStartAnother,
+}: {
+  failedTracks: TrackResult[];
+  isMobile: boolean;
+  total: number;
+  transferred: number;
+  onRetry: () => void;
+  onStartAnother: () => void;
+}) {
   const failed = failedTracks.length;
   return (
     <>
@@ -362,13 +354,13 @@ function PartialState({ failedTracks, isMobile, onRetry }: { failedTracks: Track
             onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
             onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
           >Retry failed songs</button>
-          <button style={btnYellow}
+          <button style={btnYellow} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
         </div>
       </div>
-      <ProgressBar done={transferred} total={total} label={`${transferred} out of ${total} completed`} sublabel={`${failed} songs not matched`} />
+      <ProgressBar done={transferred} total={Math.max(total, 1)} label={`${transferred} out of ${total} completed`} sublabel={`${failed} songs not matched`} />
     </>
   );
 }
@@ -415,7 +407,12 @@ function PostRetryFailureState({ failedTracks, totalRetried, isMobile }: { faile
 }
 
 // ─── State: Error (total failure) ────────────────────────────────────────────
-function ErrorState({ isMobile }: { isMobile: boolean }) {
+function ErrorState({
+  isMobile,
+  playlist,
+  onTryAgain,
+  onStartAnother,
+}: { isMobile: boolean; playlist: PlaylistItem; onTryAgain: () => void; onStartAnother: () => void }) {
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
@@ -427,13 +424,13 @@ function ErrorState({ isMobile }: { isMobile: boolean }) {
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>This is on us not you, please try again!</div>
           <PlatformRow />
         </div>
-        <div style={{ marginBottom: 24 }}><PlaylistCard /></div>
+        <div style={{ marginBottom: 24 }}><PlaylistCard playlist={playlist} /></div>
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
-          <button style={btnWhite}
+          <button style={btnWhite} onClick={onTryAgain}
             onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
             onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
           >Try again</button>
-          <button style={btnYellow}
+          <button style={btnYellow} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
@@ -456,21 +453,27 @@ export default function TransferPage() {
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
   const [spotifyAccountConnected, setSpotifyAccountConnected] = useState(false);
   const [youtubeAccountConnected, setYoutubeAccountConnected] = useState(false);
+  const [spotifySessionExpired, setSpotifySessionExpired] = useState(false);
+  const [youtubeSessionExpired, setYoutubeSessionExpired] = useState(false);
   const [hasLoadedSpotifyPlaylists, setHasLoadedSpotifyPlaylists] = useState(false);
   const [hasAttemptedSpotifyLoad, setHasAttemptedSpotifyLoad] = useState(false);
   const [disconnectTarget, setDisconnectTarget] = useState<"spotify" | "youtube" | null>(null);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [hostReady, setHostReady] = useState(true);
   const [isPreparingTransfer, setIsPreparingTransfer] = useState(false);
-  const [sourceTracks, setSourceTracks] = useState<SourceTrack[]>([]);
   const [playlistCountLoadingId, setPlaylistCountLoadingId] = useState<string | null>(null);
   const [playlistCountCooldownUntil, setPlaylistCountCooldownUntil] = useState(0);
-  // Tracks whether the user has already used their one retry
-  const [hasRetried,    setHasRetried]    = useState(false);
+  const [transferView, setTransferView] = useState<TransferViewState>("idle");
+  const [failedTracks, setFailedTracks] = useState<TrackResult[]>([]);
+  const [transferTotal, setTransferTotal] = useState(0);
+  const [transferSucceeded, setTransferSucceeded] = useState(0);
+  const [transferTargetPlaylistId, setTransferTargetPlaylistId] = useState<string | null>(null);
+  const [activeTransferPlaylist, setActiveTransferPlaylist] = useState<PlaylistItem | null>(null);
   const playlistsLoadInFlightRef = useRef(false);
   const playlistCountInFlightRef = useRef(false);
   const lastPlaylistCountFetchAtRef = useRef(0);
   const playlistListAreaRef = useRef<HTMLDivElement | null>(null);
+  const transferButtonAreaRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     // Keep this as a no-op hydration guard for future use.
@@ -503,8 +506,10 @@ export default function TransferPage() {
     function handleOutsidePointerDown(event: MouseEvent | TouchEvent) {
       const container = playlistListAreaRef.current;
       if (!container) return;
+      const transferButtonArea = transferButtonAreaRef.current;
       const target = event.target as Node | null;
       if (!target) return;
+      if (transferButtonArea?.contains(target)) return;
       if (!container.contains(target)) {
         setSelectedId(null);
       }
@@ -518,10 +523,47 @@ export default function TransferPage() {
     };
   }, [selectedId]);
 
-  const isDirectionSupported =
-    (fromPlatform === "spotify" && toPlatform === "youtube") ||
-    (fromPlatform === "youtube" && toPlatform === "spotify");
-  const canTransfer = fromConnected && toConnected && selectedId !== null && isDirectionSupported;
+  const isDirectionSupported = fromPlatform === "spotify" && toPlatform === "youtube";
+  const fromSessionReady =
+    fromPlatform === "spotify" ? !spotifySessionExpired : fromPlatform === "youtube" ? !youtubeSessionExpired : false;
+  const toSessionReady =
+    toPlatform === "spotify" ? !spotifySessionExpired : toPlatform === "youtube" ? !youtubeSessionExpired : false;
+  const fromConnectedEffective = fromConnected && fromSessionReady;
+  const toConnectedEffective = toConnected && toSessionReady;
+  const canTransfer = fromConnectedEffective && toConnectedEffective && selectedId !== null && isDirectionSupported;
+  const transferDisabledReason = !fromPlatform || !toPlatform
+    ? "Select source and destination platforms."
+    : !fromConnectedEffective || !toConnectedEffective
+      ? "Connect both platforms."
+      : !isDirectionSupported
+        ? "Only Spotify -> YouTube Music is supported right now."
+        : !selectedId
+          ? "Select a source playlist to enable transfer."
+          : null;
+
+  const refreshAuthStatus = useCallback(async () => {
+    const statusResponse = await fetch("/api/auth?action=status", { cache: "no-store" });
+    if (!statusResponse.ok) return null;
+
+    const status = await statusResponse.json().catch(() => null);
+    const spotifyConnected = Boolean(status?.spotifyConnected);
+    const youtubeConnected = Boolean(status?.youtubeConnected);
+
+    setSpotifyAccountConnected(spotifyConnected);
+    setYoutubeAccountConnected(youtubeConnected);
+    setSpotifySessionExpired(!spotifyConnected);
+    setYoutubeSessionExpired(!youtubeConnected);
+
+    if (fromPlatform === "spotify") setFromConnected(spotifyConnected);
+    if (fromPlatform === "youtube") setFromConnected(youtubeConnected);
+    if (toPlatform === "spotify") setToConnected(spotifyConnected);
+    if (toPlatform === "youtube") setToConnected(youtubeConnected);
+
+    return {
+      spotifyConnected,
+      youtubeConnected,
+    };
+  }, [fromPlatform, toPlatform]);
 
   function getCountCacheKey(platform: "spotify" | "youtube") {
     return platform === "spotify"
@@ -590,6 +632,18 @@ export default function TransferPage() {
     setIsLoadingPlaylists(true);
     setHasAttemptedSpotifyLoad(true);
     try {
+      const status = await refreshAuthStatus().catch(() => null);
+      const sourceConnected = sourcePlatform === "spotify" ? status?.spotifyConnected : status?.youtubeConnected;
+      if (status && !sourceConnected) {
+        setPlaylists([]);
+        setSelectedId(null);
+        setPlaylistCountLoadingId(null);
+        setPlaylistCountCooldownUntil(0);
+        playlistCountInFlightRef.current = false;
+        setHasLoadedSpotifyPlaylists(false);
+        throw new Error(`${sourcePlatform === "spotify" ? "Spotify" : "YouTube Music"} is not connected.`);
+      }
+
       const cachedCountById: Record<string, number> = readPlaylistCountCache(sourcePlatform);
 
       const response = await fetch(`/api/${sourcePlatform}?resource=playlists`, {
@@ -599,19 +653,18 @@ export default function TransferPage() {
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
         if (response.status === 401) {
-          // If backend says disconnected, reflect that immediately in UI.
-          setFromConnected(false);
+          if (sourcePlatform === "spotify") {
+            setSpotifySessionExpired(true);
+          } else {
+            setYoutubeSessionExpired(true);
+          }
+          // Source session is expired; clear stale source playlists so UI matches reality.
           setPlaylists([]);
           setSelectedId(null);
           setPlaylistCountLoadingId(null);
           setPlaylistCountCooldownUntil(0);
           playlistCountInFlightRef.current = false;
           setHasLoadedSpotifyPlaylists(false);
-          if (sourcePlatform === "spotify") {
-            setSpotifyAccountConnected(false);
-          } else {
-            setYoutubeAccountConnected(false);
-          }
         }
         const platformLabel = sourcePlatform === "spotify" ? "Spotify" : "YouTube";
         const message = payload?.error ?? `Unable to fetch ${platformLabel} playlists right now.`;
@@ -666,7 +719,7 @@ export default function TransferPage() {
       setIsLoadingPlaylists(false);
       playlistsLoadInFlightRef.current = false;
     }
-  }, []);
+  }, [refreshAuthStatus]);
 
   useEffect(() => {
     if (!hostReady) return;
@@ -678,11 +731,22 @@ export default function TransferPage() {
       const authResult = params.get("auth");
       const reason = params.get("reason");
       const connectSide = params.get("connectSide");
+      const fromParam = params.get("from");
+      const sourcePlaylistIdParam = params.get("sourcePlaylistId");
       let shouldLoadSourcePlaylists = false;
       let sourceToLoad: "spotify" | "youtube" | null = null;
+      const sourceActionOnly = connectSide === "from";
+
+      if (fromParam === "spotify" || fromParam === "youtube") {
+        setFromPlatform(fromParam);
+      }
+      if (sourcePlaylistIdParam) {
+        setSelectedId(sourcePlaylistIdParam);
+      }
 
       if (authResult === "spotify_success") {
         setSpotifyAccountConnected(true);
+        setSpotifySessionExpired(false);
         if (connectSide === "to") {
           setToPlatform("spotify");
           setToConnected(true);
@@ -697,6 +761,7 @@ export default function TransferPage() {
 
       if (authResult === "youtube_success") {
         setYoutubeAccountConnected(true);
+        setYoutubeSessionExpired(false);
         if (connectSide === "from") {
           setFromPlatform("youtube");
           setFromConnected(true);
@@ -719,27 +784,21 @@ export default function TransferPage() {
         });
       }
 
-      if (authResult || reason || connectSide) {
+      if (authResult || reason || connectSide || fromParam || sourcePlaylistIdParam) {
         params.delete("auth");
         params.delete("reason");
         params.delete("connectSide");
+        params.delete("from");
+        params.delete("sourcePlaylistId");
         const newQuery = params.toString();
         const nextUrl = `${window.location.pathname}${newQuery ? `?${newQuery}` : ""}`;
         window.history.replaceState({}, "", nextUrl);
       }
 
       try {
-        const statusResponse = await fetch("/api/auth?action=status", { cache: "no-store" });
-        if (!statusResponse.ok) return;
-
-        const status = await statusResponse.json();
-        if (!mounted) return;
-
-        const spotifyConnected = Boolean(status.spotifyConnected);
-        const youtubeConnected = Boolean(status.youtubeConnected);
-
-        setSpotifyAccountConnected(spotifyConnected);
-        setYoutubeAccountConnected(youtubeConnected);
+        const status = await refreshAuthStatus();
+        if (!status || !mounted) return;
+        const { spotifyConnected, youtubeConnected } = status;
 
         const fromIsConnected =
           (fromPlatform === "spotify" && spotifyConnected) ||
@@ -748,19 +807,43 @@ export default function TransferPage() {
           (toPlatform === "spotify" && spotifyConnected) ||
           (toPlatform === "youtube" && youtubeConnected);
 
-        setFromConnected(fromIsConnected);
-        setToConnected(toIsConnected);
+        if (fromIsConnected) {
+          setFromConnected(true);
+        }
+        if (toIsConnected) {
+          setToConnected(true);
+        }
 
-        if (!fromIsConnected) {
+        if (!fromPlatform) {
+          // Product direction is Spotify -> YouTube first.
+          // Never auto-default source to YouTube; either default to Spotify or stay unset.
+          if (spotifyConnected && toPlatform !== "spotify") {
+            setFromPlatform("spotify");
+            setFromConnected(true);
+            if (sourceActionOnly || !connectSide) {
+              shouldLoadSourcePlaylists = true;
+              sourceToLoad = "spotify";
+            }
+          }
+        } else if (!fromIsConnected) {
+          // Source session is no longer valid: clear stale source data immediately.
           setPlaylists([]);
           setSelectedId(null);
           setPlaylistCountLoadingId(null);
           setPlaylistCountCooldownUntil(0);
           playlistCountInFlightRef.current = false;
           setHasLoadedSpotifyPlaylists(false);
-        } else if (fromPlatform === "spotify" || fromPlatform === "youtube") {
-          shouldLoadSourcePlaylists = true;
-          sourceToLoad = fromPlatform;
+        } else if (
+          (fromPlatform === "spotify" || fromPlatform === "youtube") &&
+          !hasLoadedSpotifyPlaylists &&
+          !spotifySessionExpired &&
+          !youtubeSessionExpired
+        ) {
+          // Avoid source playlist re-fetch loops after destination reconnect when source is already loaded.
+          if (sourceActionOnly || !connectSide) {
+            shouldLoadSourcePlaylists = true;
+            sourceToLoad = fromPlatform;
+          }
         }
       } catch {
         // Ignore auth status fetch errors for MVP UX continuity.
@@ -785,7 +868,17 @@ export default function TransferPage() {
     return () => {
       mounted = false;
     };
-  }, [fromPlatform, hostReady, loadSourcePlaylists, notify]);
+  }, [
+    fromPlatform,
+    hasLoadedSpotifyPlaylists,
+    hostReady,
+    loadSourcePlaylists,
+    notify,
+    refreshAuthStatus,
+    spotifySessionExpired,
+    toPlatform,
+    youtubeSessionExpired,
+  ]);
 
   useEffect(() => {
     if (!hostReady) return;
@@ -803,8 +896,9 @@ export default function TransferPage() {
 
   useEffect(() => {
     if (!hostReady) return;
-    if (!fromConnected) return;
+    if (!fromConnectedEffective) return;
     if (fromPlatform !== "spotify" && fromPlatform !== "youtube") return;
+    if (hasLoadedSpotifyPlaylists) return;
 
     void loadSourcePlaylists(fromPlatform).catch((error) => {
       const message = error instanceof Error ? error.message : "Unable to fetch playlists.";
@@ -814,7 +908,7 @@ export default function TransferPage() {
         description: message,
       });
     });
-  }, [fromConnected, fromPlatform, hostReady, loadSourcePlaylists, notify]);
+  }, [fromConnectedEffective, fromPlatform, hasLoadedSpotifyPlaylists, hostReady, loadSourcePlaylists, notify]);
 
   async function handleFromConnect() {
     if (!hostReady) return;
@@ -829,10 +923,15 @@ export default function TransferPage() {
       return;
     }
 
+    const status = await refreshAuthStatus().catch(() => null);
+    const realSpotifyConnected = status?.spotifyConnected ?? spotifyAccountConnected;
+    const realYoutubeConnected = status?.youtubeConnected ?? youtubeAccountConnected;
     const alreadyAuthorized =
-      (fromPlatform === "spotify" && spotifyAccountConnected) ||
-      (fromPlatform === "youtube" && youtubeAccountConnected);
+      (fromPlatform === "spotify" && realSpotifyConnected) ||
+      (fromPlatform === "youtube" && realYoutubeConnected);
     if (alreadyAuthorized) {
+      if (fromPlatform === "spotify") setSpotifySessionExpired(false);
+      if (fromPlatform === "youtube") setYoutubeSessionExpired(false);
       setFromConnected(true);
       setHasAttemptedSpotifyLoad(false);
       try {
@@ -877,10 +976,15 @@ export default function TransferPage() {
       return;
     }
 
+    const status = await refreshAuthStatus().catch(() => null);
+    const realSpotifyConnected = status?.spotifyConnected ?? spotifyAccountConnected;
+    const realYoutubeConnected = status?.youtubeConnected ?? youtubeAccountConnected;
     const alreadyAuthorized =
-      (toPlatform === "spotify" && spotifyAccountConnected) ||
-      (toPlatform === "youtube" && youtubeAccountConnected);
+      (toPlatform === "spotify" && realSpotifyConnected) ||
+      (toPlatform === "youtube" && realYoutubeConnected);
     if (alreadyAuthorized) {
+      if (toPlatform === "spotify") setSpotifySessionExpired(false);
+      if (toPlatform === "youtube") setYoutubeSessionExpired(false);
       setToConnected(true);
       notify({
         tone: "success",
@@ -893,7 +997,14 @@ export default function TransferPage() {
     const authUrl = new URL("/api/auth", window.location.origin);
     authUrl.searchParams.set("action", "connect");
     authUrl.searchParams.set("platform", toPlatform);
-    authUrl.searchParams.set("returnTo", "/transfer?connectSide=to");
+    const returnParams = new URLSearchParams({ connectSide: "to" });
+    if (fromPlatform === "spotify" || fromPlatform === "youtube") {
+      returnParams.set("from", fromPlatform);
+    }
+    if (selectedId) {
+      returnParams.set("sourcePlaylistId", selectedId);
+    }
+    authUrl.searchParams.set("returnTo", `/transfer?${returnParams.toString()}`);
     if (typeof window !== "undefined" && toPlatform === "spotify") {
       const shouldForceFreshAuth = window.localStorage.getItem(SPOTIFY_FORCE_FRESH_AUTH_KEY) === "1";
       if (shouldForceFreshAuth) {
@@ -905,6 +1016,7 @@ export default function TransferPage() {
   }
 
   function handleFromSelect(p: Platform) {
+    resetTransferSession();
     if (toPlatform && p === toPlatform) {
       notify({
         tone: "info",
@@ -926,6 +1038,7 @@ export default function TransferPage() {
     setHasAttemptedSpotifyLoad(false);
   }
   function handleToSelect(p: Platform) {
+    resetTransferSession();
     if (fromPlatform && p === fromPlatform) {
       notify({
         tone: "info",
@@ -942,7 +1055,7 @@ export default function TransferPage() {
 
   async function fetchPlaylistCountByIntent(playlistId: string) {
     if (!hostReady) return;
-    if (!fromConnected) return;
+    if (!fromConnectedEffective) return;
     if (fromPlatform !== "spotify" && fromPlatform !== "youtube") return;
     if (!playlistId) return;
     if (playlistCountInFlightRef.current) return;
@@ -1011,9 +1124,52 @@ export default function TransferPage() {
     void fetchPlaylistCountByIntent(playlistId);
   }
 
+  function resetTransferSession() {
+    setTransferView("idle");
+    setFailedTracks([]);
+    setTransferTotal(0);
+    setTransferSucceeded(0);
+    setTransferTargetPlaylistId(null);
+    setActiveTransferPlaylist(null);
+  }
+
   function handleRetry() {
-    setHasRetried(true);
-    // TODO: trigger real retry API call here
+    if (isPreparingTransfer) return;
+
+    if (!isDirectionSupported) {
+      notify({
+        tone: "info",
+        title: "Direction not supported",
+        description: "Only Spotify to YouTube Music transfers are supported right now.",
+      });
+      return;
+    }
+
+    if (!fromConnectedEffective || !toConnectedEffective) {
+      notify({
+        tone: "error",
+        title: "Reconnect required",
+        description: "Please reconnect the disconnected platform, then try again.",
+      });
+      return;
+    }
+
+    const retryPlaylistId = selectedId ?? activeTransferPlaylist?.id ?? null;
+    if (!retryPlaylistId) {
+      notify({
+        tone: "info",
+        title: "Select a playlist",
+        description: "Choose a source playlist to retry this transfer.",
+      });
+      setTransferView("idle");
+      return;
+    }
+
+    if (!selectedId) {
+      setSelectedId(retryPlaylistId);
+    }
+
+    void runTransfer(retryPlaylistId);
   }
 
   function handleFromDisconnect() {
@@ -1026,13 +1182,79 @@ export default function TransferPage() {
     setDisconnectTarget(toPlatform);
   }
 
-  async function handleTransferClick() {
-    if (!canTransfer) return;
-    if (fromPlatform !== "spotify" && fromPlatform !== "youtube") return;
-    if (toPlatform !== "spotify" && toPlatform !== "youtube") return;
-    if (!selectedId) return;
+  async function runTransfer(playlistId: string) {
+    try {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[transfer:click] runTransfer invoked", {
+          playlistId,
+          fromPlatform,
+          toPlatform,
+          fromConnected,
+          toConnected,
+          fromConnectedEffective,
+          toConnectedEffective,
+          spotifySessionExpired,
+          youtubeSessionExpired,
+        });
+      }
+      const status = await refreshAuthStatus();
+      if (status) {
+        const { spotifyConnected, youtubeConnected } = status;
+        if (process.env.NODE_ENV !== "production") {
+          console.log("[transfer:click] auth status preflight", {
+            spotifyConnected,
+            youtubeConnected,
+          });
+        }
+
+        const sourceConnected =
+          (fromPlatform === "spotify" && spotifyConnected) ||
+          (fromPlatform === "youtube" && youtubeConnected);
+        const destinationConnected =
+          (toPlatform === "spotify" && spotifyConnected) ||
+          (toPlatform === "youtube" && youtubeConnected);
+
+        if (!sourceConnected || !destinationConnected) {
+          const expiredPlatforms: string[] = [];
+          if (!spotifyConnected && (fromPlatform === "spotify" || toPlatform === "spotify")) {
+            expiredPlatforms.push("Spotify");
+          }
+          if (!youtubeConnected && (fromPlatform === "youtube" || toPlatform === "youtube")) {
+            expiredPlatforms.push("YouTube Music");
+          }
+          const reconnectText =
+            expiredPlatforms.length > 0
+              ? `${expiredPlatforms.join(" and ")} session${expiredPlatforms.length > 1 ? "s" : ""} expired.`
+              : "One of your platform sessions expired.";
+          notify({
+            tone: "error",
+            title: "Reconnect required",
+            description: `${reconnectText} Please reconnect and try again.`,
+          });
+          return;
+        }
+      }
+    } catch {
+      // If status preflight fails, proceed and let transfer API return the concrete error.
+    }
+
+    const selectedPlaylist = playlists.find((playlist) => playlist.id === playlistId) ?? null;
+    if (!selectedPlaylist) {
+      notify({
+        tone: "error",
+        title: "Playlist not found",
+        description: "Please reselect the source playlist and try again.",
+      });
+      return;
+    }
 
     setIsPreparingTransfer(true);
+    setTransferView("transferring");
+    setActiveTransferPlaylist(selectedPlaylist);
+    setFailedTracks([]);
+    setTransferTotal(0);
+    setTransferSucceeded(0);
+    setTransferTargetPlaylistId(null);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 20_000);
 
@@ -1043,36 +1265,57 @@ export default function TransferPage() {
         body: JSON.stringify({
           sourcePlatform: fromPlatform,
           targetPlatform: toPlatform,
-          playlistId: selectedId,
+          playlistId,
+          playlistName: selectedPlaylist.name,
         }),
         cache: "no-store",
         signal: controller.signal,
       });
 
       const payload = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        throw new Error(payload?.error ?? "Unable to prepare transfer right now.");
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[transfer:click] /api/transfer response", {
+          ok: response.ok,
+          status: response.status,
+          payload,
+        });
       }
 
-      const tracks: SourceTrack[] = Array.isArray(payload?.results)
-        ? payload.results
-            .map((track: any) => ({
-              id: String(track?.sourceTrack?.id ?? ""),
-              name: String(track?.sourceTrack?.name ?? ""),
-              artist: String(track?.sourceTrack?.artist ?? ""),
-              album: String(track?.sourceTrack?.album ?? ""),
-              durationMs: Number.isFinite(Number(track?.sourceTrack?.durationMs))
-                ? Math.trunc(Number(track.sourceTrack.durationMs))
-                : 0,
-              imageUrl: track?.sourceTrack?.imageUrl ? String(track.sourceTrack.imageUrl) : undefined,
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Unable to transfer playlist right now.");
+      }
+
+      const failuresFromApi: TrackResult[] = Array.isArray(payload?.failures)
+        ? payload.failures
+            .map((failure: any) => ({
+              id: String(failure?.sourceTrack?.id ?? ""),
+              name: String(failure?.sourceTrack?.name ?? ""),
+              artist: String(failure?.sourceTrack?.artist ?? ""),
+              imageUrl: failure?.sourceTrack?.imageUrl ? String(failure.sourceTrack.imageUrl) : undefined,
+              status: "failed" as const,
+              failureReason: String(failure?.reason ?? "Track could not be transferred."),
             }))
-            .filter((track: SourceTrack) => Boolean(track.id && track.name))
+            .filter((track: TrackResult) => Boolean(track.id && track.name))
         : [];
 
-      setSourceTracks(tracks);
+      const processedTrackCount = Number.isFinite(Number(payload?.processedTrackCount))
+        ? Math.max(0, Math.trunc(Number(payload.processedTrackCount)))
+        : 0;
+      const transferredCount = Number.isFinite(Number(payload?.transferredCount))
+        ? Math.max(0, Math.trunc(Number(payload.transferredCount)))
+        : 0;
+      const failedCount = Number.isFinite(Number(payload?.failedCount))
+        ? Math.max(0, Math.trunc(Number(payload.failedCount)))
+        : failuresFromApi.length;
+      const total = processedTrackCount || transferredCount + failedCount;
 
-      if (tracks.length === 0) {
+      setFailedTracks(failuresFromApi);
+      setTransferTotal(total);
+      setTransferSucceeded(transferredCount);
+      setTransferTargetPlaylistId(payload?.targetPlaylistId ? String(payload.targetPlaylistId) : null);
+
+      if (total === 0) {
+        setTransferView("idle");
         notify({
           tone: "info",
           title: "No tracks found",
@@ -1081,34 +1324,47 @@ export default function TransferPage() {
         return;
       }
 
+      if (transferredCount === 0) {
+        setTransferView("error");
+      } else if (failedCount > 0) {
+        setTransferView("partial");
+      } else {
+        setTransferView("success");
+      }
+
       notify({
         tone: "success",
-        title: "Transfer prepared",
-        description:
-          typeof payload?.matchedCount === "number" && typeof payload?.failedCount === "number"
-            ? `${payload.matchedCount} matched, ${payload.failedCount} unmatched.`
-            : `${tracks.length} track${tracks.length === 1 ? "" : "s"} ready.`,
+        title: transferredCount === total ? "Transfer complete" : "Transfer finished with partial matches",
+        description: `${transferredCount} transferred, ${failedCount} failed.`,
       });
     } catch (error) {
+      setTransferView("error");
       if (error instanceof Error && error.name === "AbortError") {
         notify({
           tone: "error",
           title: "Request timed out",
-          description: "Track fetch took too long. Please try again.",
+          description: "Transfer took too long. Please try again.",
         });
         return;
       }
 
-      const message = error instanceof Error ? error.message : "Unable to fetch tracks right now.";
+      const message = error instanceof Error ? error.message : "Unable to transfer tracks right now.";
+
       notify({
         tone: "error",
-        title: "Could not prepare transfer",
+        title: "Could not transfer playlist",
         description: message,
       });
     } finally {
       clearTimeout(timeoutId);
       setIsPreparingTransfer(false);
     }
+  }
+
+  async function handleTransferClick() {
+    if (!canTransfer) return;
+    if (!selectedId) return;
+    void runTransfer(selectedId);
   }
 
   async function disconnectPlatformConnection({
@@ -1131,6 +1387,8 @@ export default function TransferPage() {
       }
 
       if (disconnectTarget === "spotify") {
+        setSpotifySessionExpired(false);
+        resetTransferSession();
         if (!softOnly) {
           setSpotifyAccountConnected(false);
         }
@@ -1171,6 +1429,8 @@ export default function TransferPage() {
           });
         }
       } else if (disconnectTarget === "youtube") {
+        setYoutubeSessionExpired(false);
+        resetTransferSession();
         if (!softOnly) {
           setYoutubeAccountConnected(false);
         }
@@ -1299,8 +1559,8 @@ export default function TransferPage() {
           <PlatformSelector
             fromPlatform={fromPlatform}
             toPlatform={toPlatform}
-            fromConnected={fromConnected}
-            toConnected={toConnected}
+            fromConnected={fromConnectedEffective}
+            toConnected={toConnectedEffective}
             onFromSelect={handleFromSelect}
             onToSelect={handleToSelect}
             onFromConnect={handleFromConnect}
@@ -1312,41 +1572,87 @@ export default function TransferPage() {
           {/* Divider */}
           <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: isMobile ? "20px 0" : "32px 0" }} />
 
-          {/* ── Playlist list + Transfer button (default/connected state) ── */}
-          <div ref={playlistListAreaRef} style={{ marginBottom: isMobile ? 20 : 32 }}>
-            <PlaylistList
-              platform={fromPlatform}
-              connected={fromConnected}
-              loading={isLoadingPlaylists}
-              playlists={playlists}
-              selectedId={selectedId}
-              countLoadingId={playlistCountLoadingId}
-              onSelect={handlePlaylistSelect}
-            />
-          </div>
+          {transferView === "idle" && (
+            <>
+              <div ref={playlistListAreaRef} style={{ marginBottom: isMobile ? 20 : 32 }}>
+                <PlaylistList
+                  platform={fromPlatform}
+                  connected={fromConnected}
+                  loading={isLoadingPlaylists}
+                  playlists={playlists}
+                  selectedId={selectedId}
+                  countLoadingId={playlistCountLoadingId}
+                  onSelect={handlePlaylistSelect}
+                />
+              </div>
 
-          <div style={{ display: "flex", justifyContent: isMobile ? "stretch" : "center" }} className="transfer-btn-wrapper">
-            <button
-              disabled={!canTransfer || isPreparingTransfer}
-              style={{
-                width: isMobile ? "100%" : "45%",
-                minWidth: isMobile ? "auto" : 200,
-                padding: isMobile ? "18px 24px" : "16px 24px",
-                borderRadius: 100, border: "none",
-                background: canTransfer && !isPreparingTransfer ? "#e8c547" : "rgba(255,255,255,0.08)",
-                color: canTransfer && !isPreparingTransfer ? "#0a0a0b" : "rgba(255,255,255,0.3)",
-                fontFamily: "'DM Sans', sans-serif", fontWeight: 700,
-                fontSize: isMobile ? 17 : 16,
-                cursor: canTransfer && !isPreparingTransfer ? "pointer" : "not-allowed",
-                transition: "transform 0.15s, box-shadow 0.15s",
-              }}
-              onMouseEnter={e => { if (canTransfer) { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 40px rgba(232,197,71,0.3)"; } }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
-              onClick={handleTransferClick}
-            >
-              {isPreparingTransfer ? "Preparing transfer..." : "Transfer playlist"}
-            </button>
-          </div>
+              <div
+                ref={transferButtonAreaRef}
+                style={{ display: "flex", justifyContent: isMobile ? "stretch" : "center" }}
+                className="transfer-btn-wrapper"
+              >
+                <button
+                  disabled={Boolean(transferDisabledReason) || isPreparingTransfer}
+                  style={{
+                    width: isMobile ? "100%" : "45%",
+                    minWidth: isMobile ? "auto" : 200,
+                    padding: isMobile ? "18px 24px" : "16px 24px",
+                    borderRadius: 100, border: "none",
+                    background: !transferDisabledReason && !isPreparingTransfer ? "#e8c547" : "rgba(255,255,255,0.08)",
+                    color: !transferDisabledReason && !isPreparingTransfer ? "#0a0a0b" : "rgba(255,255,255,0.3)",
+                    fontFamily: "'DM Sans', sans-serif", fontWeight: 700,
+                    fontSize: isMobile ? 17 : 16,
+                    cursor: !transferDisabledReason && !isPreparingTransfer ? "pointer" : "not-allowed",
+                    transition: "transform 0.15s, box-shadow 0.15s",
+                  }}
+                  onMouseEnter={e => { if (!transferDisabledReason) { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 40px rgba(232,197,71,0.3)"; } }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
+                  onClick={handleTransferClick}
+                >
+                  {isPreparingTransfer ? "Preparing transfer..." : "Transfer playlist"}
+                </button>
+              </div>
+            </>
+          )}
+
+          {transferView === "transferring" && activeTransferPlaylist && (
+            <TransferringState
+              tracks={failedTracks}
+              total={Math.max(transferTotal || activeTransferPlaylist.trackCount || 1, 1)}
+              isMobile={isMobile}
+              playlist={activeTransferPlaylist}
+            />
+          )}
+
+          {transferView === "success" && activeTransferPlaylist && (
+            <SuccessState
+              isMobile={isMobile}
+              playlist={activeTransferPlaylist}
+              total={transferTotal}
+              targetPlaylistId={transferTargetPlaylistId}
+              onStartAnother={resetTransferSession}
+            />
+          )}
+
+          {transferView === "partial" && activeTransferPlaylist && (
+            <PartialState
+              failedTracks={failedTracks}
+              isMobile={isMobile}
+              total={transferTotal}
+              transferred={transferSucceeded}
+              onRetry={handleRetry}
+              onStartAnother={resetTransferSession}
+            />
+          )}
+
+          {transferView === "error" && activeTransferPlaylist && (
+            <ErrorState
+              isMobile={isMobile}
+              playlist={activeTransferPlaylist}
+              onTryAgain={handleRetry}
+              onStartAnother={resetTransferSession}
+            />
+          )}
         </div>
 
       </div>

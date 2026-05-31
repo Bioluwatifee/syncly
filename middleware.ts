@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const isTransferPublic = process.env.TRANSFER_PUBLIC === "true";
 
-export function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const host = request.nextUrl.hostname;
   const isLocalDevHost = host === "localhost" || host === "127.0.0.1";
 

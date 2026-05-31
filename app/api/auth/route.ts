@@ -1,6 +1,13 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, getClientIp, isSameOriginMutation } from "@/lib/security";
+import {
+  clearPlatformSession,
+  ensureSessionId,
+  getPlatformSession,
+  getSessionIdFromRequest,
+  setPlatformSession,
+} from "@/lib/oauth-session";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +15,9 @@ type SupportedPlatform = "spotify" | "youtube";
 const SPOTIFY_SCOPES = [
   "playlist-read-private",
   "playlist-read-collaborative",
+  "playlist-modify-public",
+  "playlist-modify-private",
+  "user-library-read",
 ].join(" ");
 
 const AUTH_CONNECT_RATE_LIMIT = { limit: 30, windowMs: 60_000 };
@@ -76,27 +86,16 @@ function isSecure(request: NextRequest): boolean {
   return request.nextUrl.protocol === "https:" || process.env.NODE_ENV === "production";
 }
 
-function getCanonicalAppOrigin(request: NextRequest): string {
-  const candidates = [
-    process.env.NEXT_PUBLIC_APP_URL,
-    process.env.NEXTAUTH_URL,
-    request.nextUrl.origin,
-  ];
-
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    try {
-      return new URL(candidate).origin;
-    } catch {
-      // Ignore malformed env values and continue fallback chain.
-    }
+function getAppOriginForRedirect(request: NextRequest): string {
+  if (process.env.NODE_ENV !== "production") {
+    return "http://127.0.0.1:3000";
   }
-
   return request.nextUrl.origin;
 }
 
 function withAuthResultPath(request: NextRequest, returnPath: string, authValue: string, reason?: string): URL {
-  const redirectUrl = new URL(returnPath, getCanonicalAppOrigin(request));
+  // In development, force a single canonical origin to avoid localhost/127 split-brain.
+  const redirectUrl = new URL(returnPath, getAppOriginForRedirect(request));
   redirectUrl.searchParams.set("auth", authValue);
   if (reason) {
     redirectUrl.searchParams.set("reason", reason);
@@ -167,6 +166,14 @@ async function beginOAuthFlow(
     authUrl.searchParams.set("state", state);
     if (options?.forceDialog) {
       authUrl.searchParams.set("show_dialog", "true");
+    }
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[auth:spotify] oauth authorize request", {
+        requestedScopes: SPOTIFY_SCOPES,
+        authorizationUrl: authUrl.toString(),
+        redirectUri,
+        requestHost: request.nextUrl.host,
+      });
     }
 
     const response = NextResponse.redirect(authUrl);
@@ -322,6 +329,7 @@ async function completeOAuthFlow(request: NextRequest): Promise<NextResponse> {
       : await exchangeYouTubeCodeForToken(code);
 
     const response = NextResponse.redirect(withAuthResultPath(request, returnPath, `${platform}_success`));
+    const sessionId = ensureSessionId(request, response);
     setTokenCookies(
       response,
       request,
@@ -330,6 +338,11 @@ async function completeOAuthFlow(request: NextRequest): Promise<NextResponse> {
       tokenPayload.refreshToken,
       tokenPayload.expiresIn
     );
+    setPlatformSession(sessionId, platform, {
+      accessToken: tokenPayload.accessToken,
+      refreshToken: tokenPayload.refreshToken,
+      expiresAt: Date.now() + tokenPayload.expiresIn * 1000,
+    });
     clearOauthStateCookie(response, request, platform);
     return response;
   } catch (exchangeError) {
@@ -340,27 +353,79 @@ async function completeOAuthFlow(request: NextRequest): Promise<NextResponse> {
 }
 
 function getConnectionStatus(request: NextRequest) {
+  const sessionId = getSessionIdFromRequest(request);
+  const spotifyServerSession = sessionId ? getPlatformSession(sessionId, "spotify") : null;
+  const youtubeServerSession = sessionId ? getPlatformSession(sessionId, "youtube") : null;
   const spotifyAccess = request.cookies.get(tokenCookieNames.spotify.access)?.value;
   const spotifyRefresh = request.cookies.get(tokenCookieNames.spotify.refresh)?.value;
+  const spotifyExpiresAtRaw = request.cookies.get(tokenCookieNames.spotify.expiresAt)?.value;
   const youtubeAccess = request.cookies.get(tokenCookieNames.youtube.access)?.value;
   const youtubeRefresh = request.cookies.get(tokenCookieNames.youtube.refresh)?.value;
+  const youtubeExpiresAtRaw = request.cookies.get(tokenCookieNames.youtube.expiresAt)?.value;
+
+  const spotifyExpiresAt = spotifyExpiresAtRaw ? Number(spotifyExpiresAtRaw) : 0;
+  const youtubeExpiresAt = youtubeExpiresAtRaw ? Number(youtubeExpiresAtRaw) : 0;
+  const now = Date.now();
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[auth:status]", {
+      host: request.nextUrl.host,
+      spotifyAccessPresent: Boolean(spotifyAccess),
+      spotifyRefreshPresent: Boolean(spotifyRefresh),
+      spotifyExpiresAt,
+      spotifyExpiresInSec: spotifyExpiresAt ? Math.floor((spotifyExpiresAt - now) / 1000) : null,
+      youtubeAccessPresent: Boolean(youtubeAccess),
+      youtubeRefreshPresent: Boolean(youtubeRefresh),
+      youtubeExpiresAt,
+      youtubeExpiresInSec: youtubeExpiresAt ? Math.floor((youtubeExpiresAt - now) / 1000) : null,
+    });
+  }
+
+  const spotifyConnected = Boolean(
+    spotifyServerSession?.accessToken ||
+      spotifyServerSession?.refreshToken ||
+      spotifyAccess ||
+      spotifyRefresh
+  );
+  const youtubeConnected = Boolean(
+    youtubeServerSession?.accessToken ||
+      youtubeServerSession?.refreshToken ||
+      youtubeAccess ||
+      youtubeRefresh
+  );
 
   return {
-    spotifyConnected: Boolean(spotifyAccess || spotifyRefresh),
-    youtubeConnected: Boolean(youtubeAccess || youtubeRefresh),
+    spotifyConnected,
+    youtubeConnected,
+    debug: process.env.NODE_ENV !== "production"
+      ? {
+          host: request.nextUrl.host,
+          spotifyAccessPresent: Boolean(spotifyAccess),
+          spotifyRefreshPresent: Boolean(spotifyRefresh),
+          spotifyExpiresAt,
+          spotifyExpiresInSec: spotifyExpiresAt ? Math.floor((spotifyExpiresAt - now) / 1000) : null,
+          youtubeAccessPresent: Boolean(youtubeAccess),
+          youtubeRefreshPresent: Boolean(youtubeRefresh),
+          youtubeExpiresAt,
+          youtubeExpiresInSec: youtubeExpiresAt ? Math.floor((youtubeExpiresAt - now) / 1000) : null,
+        }
+      : undefined,
   };
 }
 
 function disconnectPlatform(request: NextRequest, platform: SupportedPlatform | "all") {
   const response = NextResponse.json({ disconnected: platform });
+  const sessionId = getSessionIdFromRequest(request);
 
   if (platform === "all") {
     clearTokenCookies(response, request, "spotify");
     clearTokenCookies(response, request, "youtube");
+    if (sessionId) clearPlatformSession(sessionId, "all");
     return response;
   }
 
   clearTokenCookies(response, request, platform);
+  if (sessionId) clearPlatformSession(sessionId, platform);
   return response;
 }
 
