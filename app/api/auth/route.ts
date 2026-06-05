@@ -17,6 +17,8 @@ const SPOTIFY_SCOPES = [
   "playlist-read-collaborative",
   "playlist-modify-public",
   "playlist-modify-private",
+  "user-read-private",
+  "user-read-email",
   "user-library-read",
 ].join(" ");
 
@@ -87,6 +89,8 @@ function isSecure(request: NextRequest): boolean {
 }
 
 function getAppOriginForRedirect(request: NextRequest): string {
+  const fromEnv = process.env.NEXT_PUBLIC_APP_URL?.trim() || process.env.NEXTAUTH_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
   if (process.env.NODE_ENV !== "production") {
     return "http://127.0.0.1:3000";
   }
@@ -120,6 +124,8 @@ function setTokenCookies(
 
   if (refreshToken) {
     response.cookies.set(names.refresh, refreshToken, { ...COOKIE_CONFIG, secure, maxAge: 60 * 60 * 24 * 90 });
+  } else {
+    response.cookies.set(names.refresh, "", { ...COOKIE_CONFIG, secure, maxAge: 0 });
   }
 }
 
@@ -164,7 +170,7 @@ async function beginOAuthFlow(
     authUrl.searchParams.set("scope", SPOTIFY_SCOPES);
     authUrl.searchParams.set("redirect_uri", redirectUri);
     authUrl.searchParams.set("state", state);
-    if (options?.forceDialog) {
+    if (options?.forceDialog || process.env.NODE_ENV !== "production") {
       authUrl.searchParams.set("show_dialog", "true");
     }
     if (process.env.NODE_ENV !== "production") {
@@ -172,7 +178,7 @@ async function beginOAuthFlow(
         requestedScopes: SPOTIFY_SCOPES,
         authorizationUrl: authUrl.toString(),
         redirectUri,
-        requestHost: request.nextUrl.host,
+        appOrigin: getAppOriginForRedirect(request),
       });
     }
 
@@ -250,6 +256,7 @@ async function exchangeSpotifyCodeForToken(code: string) {
     accessToken: payload.access_token as string,
     refreshToken: payload.refresh_token as string | undefined,
     expiresIn: payload.expires_in as number,
+    scope: payload.scope as string | undefined,
   };
 }
 
@@ -288,7 +295,7 @@ async function exchangeYouTubeCodeForToken(code: string) {
   };
 }
 
-async function completeOAuthFlow(request: NextRequest): Promise<NextResponse> {
+export async function completeOAuthFlow(request: NextRequest): Promise<NextResponse> {
   const code = request.nextUrl.searchParams.get("code");
   const statePayload = decodeState(request.nextUrl.searchParams.get("state"));
   const fallbackPath = sanitizeReturnPath(request.nextUrl.searchParams.get("returnTo"));
@@ -328,8 +335,18 @@ async function completeOAuthFlow(request: NextRequest): Promise<NextResponse> {
       ? await exchangeSpotifyCodeForToken(code)
       : await exchangeYouTubeCodeForToken(code);
 
+    if (platform === "spotify") {
+      console.log("[auth:spotify:callback] granted scopes:", {
+        scope: tokenPayload.scope ?? "",
+      });
+    }
+
     const response = NextResponse.redirect(withAuthResultPath(request, returnPath, `${platform}_success`));
     const sessionId = ensureSessionId(request, response);
+    if (platform === "spotify" && sessionId) {
+      // Replace any prior Spotify session/token state before writing the fresh callback token.
+      clearPlatformSession(sessionId, "spotify");
+    }
     setTokenCookies(
       response,
       request,
@@ -342,7 +359,16 @@ async function completeOAuthFlow(request: NextRequest): Promise<NextResponse> {
       accessToken: tokenPayload.accessToken,
       refreshToken: tokenPayload.refreshToken,
       expiresAt: Date.now() + tokenPayload.expiresIn * 1000,
+      grantedScopes: platform === "spotify" ? (tokenPayload.scope ?? "") : undefined,
     });
+    if (platform === "spotify") {
+      console.log("[auth:spotify:callback] stored token snapshot:", {
+        accessTokenPrefix: tokenPayload.accessToken.slice(0, 20),
+        accessTokenLength: tokenPayload.accessToken.length,
+        refreshTokenPresent: Boolean(tokenPayload.refreshToken),
+        grantedScopes: tokenPayload.scope ?? "",
+      });
+    }
     clearOauthStateCookie(response, request, platform);
     return response;
   } catch (exchangeError) {
@@ -369,7 +395,8 @@ function getConnectionStatus(request: NextRequest) {
 
   if (process.env.NODE_ENV !== "production") {
     console.log("[auth:status]", {
-      host: request.nextUrl.host,
+      host: getAppOriginForRedirect(request),
+      requestHost: request.nextUrl.host,
       spotifyAccessPresent: Boolean(spotifyAccess),
       spotifyRefreshPresent: Boolean(spotifyRefresh),
       spotifyExpiresAt,

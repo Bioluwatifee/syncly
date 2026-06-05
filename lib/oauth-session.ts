@@ -7,6 +7,7 @@ type PlatformSession = {
   accessToken: string;
   refreshToken?: string;
   expiresAt: number;
+  grantedScopes?: string;
 };
 
 type UserOAuthSession = {
@@ -73,4 +74,3 @@ export function clearPlatformSession(sessionId: string, platform: OAuthPlatform 
   }
   sessions.set(sessionId, existing);
 }
-

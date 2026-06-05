@@ -21,9 +21,90 @@ interface TrackResult {
   imageUrl?: string;
   status: "success" | "failed" | "pending";
   failureReason?: string;
+  failureDetails?: {
+    searchQuery: string;
+    searchQueries: string[];
+    threshold: number;
+    diagnostics: {
+      searchQueries: string[];
+      threshold: number;
+      attempts: Array<{
+        searchQuery: string;
+        topCandidates: Array<{
+          id: string;
+          name: string;
+          artist: string;
+          album: string;
+          durationMs: number;
+          durationDeltaMs: number | null;
+          durationStatus: "matched" | "mismatch" | "unavailable";
+          titleScore: number;
+          artistScore: number;
+          combinedScore: number;
+          rejectionReason: string | null;
+        }>;
+        rejectionReason: string;
+        matchFound: boolean;
+      }>;
+      topCandidates: Array<{
+        id: string;
+        name: string;
+        artist: string;
+        album: string;
+        durationMs: number;
+        durationDeltaMs: number | null;
+        durationStatus: "matched" | "mismatch" | "unavailable";
+        titleScore: number;
+        artistScore: number;
+        combinedScore: number;
+        rejectionReason: string | null;
+      }>;
+      selectedCandidate: {
+        id: string;
+        name: string;
+        artist: string;
+        album: string;
+        durationMs: number;
+        durationDeltaMs: number | null;
+        durationStatus: "matched" | "mismatch" | "unavailable";
+        titleScore: number;
+        artistScore: number;
+        combinedScore: number;
+        rejectionReason: string | null;
+      } | null;
+      rejectionReason: string;
+    };
+    retryEligible: boolean;
+  };
 }
 
 type TransferViewState = "idle" | "transferring" | "success" | "partial" | "error";
+
+interface TransferProgress {
+  transferId: string;
+  status: "idle" | "running" | "done" | "error";
+  playlistName?: string;
+  sourceTrackCount?: number;
+  processedTrackCount?: number;
+  transferredCount?: number;
+  failedCount?: number;
+  batchIndex?: number;
+  totalBatches?: number;
+  batchProcessedCount?: number;
+  batchSize?: number;
+  currentTrackName?: string;
+  currentTrackArtist?: string;
+  currentTrackIndex?: number;
+  currentTrackTotal?: number;
+  targetPlaylistId?: string | null;
+  targetPlaylistUrl?: string | null;
+  transferDurationMs?: number;
+  completedAt?: string;
+  error?: string;
+  overallStatus?: "success" | "partial" | "failure";
+  result?: any;
+  updatedAt: number;
+}
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const SpotifyWordmark = () => (
@@ -319,48 +400,80 @@ function SuccessState({
 function PartialState({
   failedTracks,
   isMobile,
-  total,
+  sourceTrackCount,
   transferred,
+  transferDurationMs,
+  completedAt,
+  targetPlaylistUrl,
   onRetry,
   onStartAnother,
 }: {
   failedTracks: TrackResult[];
   isMobile: boolean;
-  total: number;
+  sourceTrackCount: number;
   transferred: number;
+  transferDurationMs: number;
+  completedAt: string | null;
+  targetPlaylistUrl: string | null;
   onRetry: () => void;
   onStartAnother: () => void;
 }) {
   const failed = failedTracks.length;
+  const completionLabel = formatCompletedAt(completedAt);
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
-        Transferring playlist…
+        Transfer result
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
         <div style={{ textAlign: "center", marginBottom: 4 }}>
-          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>{transferred} out of {total} songs transferred</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>{failed} songs could not be found</div>
-          <SplitBar success={transferred} failed={failed} total={total} />
+          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>Transfer Complete</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>{transferred} transferred successfully, {failed} could not be matched</div>
+          <SplitBar success={transferred} failed={failed} total={Math.max(sourceTrackCount, 1)} />
           <div style={{ marginTop: 20, marginBottom: 4 }}><PlatformRow /></div>
         </div>
-        <FailedTrackList tracks={failedTracks} isMobile={isMobile} />
+        <div style={{ display: "grid", gap: 10, margin: "18px 0 20px", textAlign: "left" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Source tracks</span><strong style={{ color: "#fff" }}>{sourceTrackCount}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Transferred</span><strong style={{ color: "#1ed760" }}>{transferred}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Failed</span><strong style={{ color: "#e85f47" }}>{failed}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Duration</span><strong style={{ color: "#fff" }}>{formatDurationMs(transferDurationMs)}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Completed</span><strong style={{ color: "#fff" }}>{completionLabel ?? "—"}</strong>
+          </div>
+        </div>
+        <FailedTrackList tracks={failedTracks} isMobile={isMobile} showReasons />
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
           <CopyFailedButton tracks={failedTracks} />
         </div>
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
+          <a
+            href={targetPlaylistUrl || "https://music.youtube.com"}
+            target="_blank"
+            rel="noreferrer"
+            style={{ ...btnWhite, textDecoration: "none", textAlign: "center" }}
+            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
+          >Open Playlist</a>
           <button style={btnWhite}
             onClick={onRetry}
             onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
             onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-          >Retry failed songs</button>
+          >Retry Failed Tracks</button>
           <button style={btnYellow} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
         </div>
       </div>
-      <ProgressBar done={transferred} total={Math.max(total, 1)} label={`${transferred} out of ${total} completed`} sublabel={`${failed} songs not matched`} />
+      <ProgressBar done={transferred} total={Math.max(sourceTrackCount, 1)} label={`${transferred} out of ${sourceTrackCount} completed`} sublabel={`${failed} songs not matched`} />
     </>
   );
 }
@@ -410,26 +523,73 @@ function PostRetryFailureState({ failedTracks, totalRetried, isMobile }: { faile
 function ErrorState({
   isMobile,
   playlist,
+  failedTracks,
+  sourceTrackCount,
+  transferredCount,
+  transferDurationMs,
+  completedAt,
+  targetPlaylistUrl,
   onTryAgain,
   onStartAnother,
-}: { isMobile: boolean; playlist: PlaylistItem; onTryAgain: () => void; onStartAnother: () => void }) {
+}: {
+  isMobile: boolean;
+  playlist: PlaylistItem;
+  failedTracks: TrackResult[];
+  sourceTrackCount: number;
+  transferredCount: number;
+  transferDurationMs: number;
+  completedAt: string | null;
+  targetPlaylistUrl: string | null;
+  onTryAgain: () => void;
+  onStartAnother: () => void;
+}) {
+  const completionLabel = formatCompletedAt(completedAt);
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
-        Transferring playlist…
+        Transfer result
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 8 }}>We couldn&apos;t transfer any song</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>This is on us not you, please try again!</div>
+          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Transfer Complete</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>No tracks were transferred successfully.</div>
           <PlatformRow />
         </div>
         <div style={{ marginBottom: 24 }}><PlaylistCard playlist={playlist} /></div>
+        <div style={{ display: "grid", gap: 10, margin: "0 0 20px", textAlign: "left" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Source tracks</span><strong style={{ color: "#fff" }}>{sourceTrackCount}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Transferred</span><strong style={{ color: "#1ed760" }}>{transferredCount}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Failed</span><strong style={{ color: "#e85f47" }}>{failedTracks.length}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Duration</span><strong style={{ color: "#fff" }}>{formatDurationMs(transferDurationMs)}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Completed</span><strong style={{ color: "#fff" }}>{completionLabel ?? "—"}</strong>
+          </div>
+        </div>
+        <FailedTrackList tracks={failedTracks} isMobile={isMobile} showReasons />
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+          <CopyFailedButton tracks={failedTracks} />
+        </div>
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
+          <a
+            href={targetPlaylistUrl || "https://music.youtube.com"}
+            target="_blank"
+            rel="noreferrer"
+            style={{ ...btnWhite, textDecoration: "none", textAlign: "center" }}
+            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
+          >Open Playlist</a>
           <button style={btnWhite} onClick={onTryAgain}
             onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
             onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-          >Try again</button>
+          >Retry Failed Tracks</button>
           <button style={btnYellow} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
@@ -468,12 +628,22 @@ export default function TransferPage() {
   const [transferTotal, setTransferTotal] = useState(0);
   const [transferSucceeded, setTransferSucceeded] = useState(0);
   const [transferTargetPlaylistId, setTransferTargetPlaylistId] = useState<string | null>(null);
+  const [transferTargetPlaylistUrl, setTransferTargetPlaylistUrl] = useState<string | null>(null);
+  const [transferCompletedAt, setTransferCompletedAt] = useState<string | null>(null);
+  const [transferDurationMs, setTransferDurationMs] = useState<number>(0);
+  const [transferOverallStatus, setTransferOverallStatus] = useState<"success" | "partial" | "failure" | null>(null);
+  const [transferProgress, setTransferProgress] = useState<TransferProgress | null>(null);
   const [activeTransferPlaylist, setActiveTransferPlaylist] = useState<PlaylistItem | null>(null);
+  const [activeTransferId, setActiveTransferId] = useState<string | null>(null);
   const playlistsLoadInFlightRef = useRef(false);
   const playlistCountInFlightRef = useRef(false);
   const lastPlaylistCountFetchAtRef = useRef(0);
   const playlistListAreaRef = useRef<HTMLDivElement | null>(null);
+  const platformSelectorAreaRef = useRef<HTMLDivElement | null>(null);
   const transferButtonAreaRef = useRef<HTMLDivElement | null>(null);
+  const transferProgressPollRef = useRef<number | null>(null);
+  const transferResultAppliedRef = useRef(false);
+  const transferNotificationShownRef = useRef(false);
 
   useEffect(() => {
     // Keep this as a no-op hydration guard for future use.
@@ -506,9 +676,11 @@ export default function TransferPage() {
     function handleOutsidePointerDown(event: MouseEvent | TouchEvent) {
       const container = playlistListAreaRef.current;
       if (!container) return;
+      const platformSelectorArea = platformSelectorAreaRef.current;
       const transferButtonArea = transferButtonAreaRef.current;
       const target = event.target as Node | null;
       if (!target) return;
+      if (platformSelectorArea?.contains(target)) return;
       if (transferButtonArea?.contains(target)) return;
       if (!container.contains(target)) {
         setSelectedId(null);
@@ -522,6 +694,14 @@ export default function TransferPage() {
       document.removeEventListener("touchstart", handleOutsidePointerDown);
     };
   }, [selectedId]);
+
+  useEffect(() => {
+    return () => {
+      if (transferProgressPollRef.current !== null) {
+        window.clearInterval(transferProgressPollRef.current);
+      }
+    };
+  }, []);
 
   const isDirectionSupported = fromPlatform === "spotify" && toPlatform === "youtube";
   const fromSessionReady =
@@ -1125,12 +1305,24 @@ export default function TransferPage() {
   }
 
   function resetTransferSession() {
+    if (transferProgressPollRef.current !== null) {
+      window.clearInterval(transferProgressPollRef.current);
+      transferProgressPollRef.current = null;
+    }
     setTransferView("idle");
     setFailedTracks([]);
     setTransferTotal(0);
     setTransferSucceeded(0);
     setTransferTargetPlaylistId(null);
+    setTransferTargetPlaylistUrl(null);
+    setTransferCompletedAt(null);
+    setTransferDurationMs(0);
+    setTransferOverallStatus(null);
+    setTransferProgress(null);
+    setActiveTransferId(null);
     setActiveTransferPlaylist(null);
+    transferResultAppliedRef.current = false;
+    transferNotificationShownRef.current = false;
   }
 
   function handleRetry() {
@@ -1165,11 +1357,25 @@ export default function TransferPage() {
       return;
     }
 
+    const retryTrackIds = failedTracks.map((track) => track.id).filter(Boolean);
+    if (retryTrackIds.length === 0) {
+      notify({
+        tone: "info",
+        title: "Nothing to retry",
+        description: "We did not capture any failed tracks from the last transfer.",
+      });
+      return;
+    }
+
     if (!selectedId) {
       setSelectedId(retryPlaylistId);
     }
 
-    void runTransfer(retryPlaylistId);
+    void runTransfer(retryPlaylistId, {
+      retryTrackIds,
+      targetPlaylistId: transferTargetPlaylistId,
+      matchMode: "relaxed",
+    });
   }
 
   function handleFromDisconnect() {
@@ -1182,7 +1388,222 @@ export default function TransferPage() {
     setDisconnectTarget(toPlatform);
   }
 
-  async function runTransfer(playlistId: string) {
+  function applyTransferPayload(payload: any, options?: { notify?: boolean }): boolean {
+    if (!payload || transferResultAppliedRef.current) return false;
+
+    const failuresFromApi: TrackResult[] = Array.isArray(payload?.failedTracks ?? payload?.failures)
+      ? (payload.failedTracks ?? payload.failures)
+          .map((failure: any) => ({
+            id: String(failure?.sourceTrack?.id ?? ""),
+            name: String(failure?.sourceTrack?.name ?? ""),
+            artist: String(failure?.sourceTrack?.artist ?? ""),
+            imageUrl: failure?.sourceTrack?.imageUrl ? String(failure.sourceTrack.imageUrl) : undefined,
+            status: "failed" as const,
+            failureReason: String(failure?.reason ?? "Track could not be transferred."),
+            failureDetails: failure ? {
+              searchQuery: String(failure?.searchQuery ?? ""),
+              searchQueries: Array.isArray(failure?.searchQueries) ? failure.searchQueries.map((q: any) => String(q)) : [],
+              threshold: Number.isFinite(Number(failure?.threshold)) ? Number(failure.threshold) : 0,
+              diagnostics: {
+                searchQueries: Array.isArray(failure?.diagnostics?.searchQueries)
+                  ? failure.diagnostics.searchQueries.map((q: any) => String(q))
+                  : [],
+                threshold: Number.isFinite(Number(failure?.diagnostics?.threshold))
+                  ? Number(failure.diagnostics.threshold)
+                  : 0,
+                attempts: Array.isArray(failure?.diagnostics?.attempts)
+                  ? failure.diagnostics.attempts.map((attempt: any) => ({
+                      searchQuery: String(attempt?.searchQuery ?? ""),
+                      topCandidates: Array.isArray(attempt?.topCandidates)
+                        ? attempt.topCandidates.map((candidate: any) => ({
+                            id: String(candidate?.id ?? ""),
+                            name: String(candidate?.name ?? ""),
+                            artist: String(candidate?.artist ?? ""),
+                            album: String(candidate?.album ?? ""),
+                            durationMs: Number.isFinite(Number(candidate?.durationMs)) ? Math.trunc(Number(candidate.durationMs)) : 0,
+                            durationDeltaMs: candidate?.durationDeltaMs === null || candidate?.durationDeltaMs === undefined
+                              ? null
+                              : Number.isFinite(Number(candidate?.durationDeltaMs))
+                                ? Math.trunc(Number(candidate.durationDeltaMs))
+                                : null,
+                            durationStatus: candidate?.durationStatus === "matched" || candidate?.durationStatus === "mismatch" || candidate?.durationStatus === "unavailable"
+                              ? candidate.durationStatus
+                              : "unavailable",
+                            titleScore: Number(candidate?.titleScore ?? 0),
+                            artistScore: Number(candidate?.artistScore ?? 0),
+                            combinedScore: Number(candidate?.combinedScore ?? 0),
+                            rejectionReason: candidate?.rejectionReason === null || candidate?.rejectionReason === undefined
+                              ? null
+                              : String(candidate.rejectionReason),
+                          }))
+                        : [],
+                      rejectionReason: String(attempt?.rejectionReason ?? ""),
+                      matchFound: Boolean(attempt?.matchFound),
+                    }))
+                  : [],
+                topCandidates: Array.isArray(failure?.diagnostics?.topCandidates)
+                  ? failure.diagnostics.topCandidates.map((candidate: any) => ({
+                      id: String(candidate?.id ?? ""),
+                      name: String(candidate?.name ?? ""),
+                      artist: String(candidate?.artist ?? ""),
+                      album: String(candidate?.album ?? ""),
+                      durationMs: Number.isFinite(Number(candidate?.durationMs)) ? Math.trunc(Number(candidate.durationMs)) : 0,
+                      durationDeltaMs: candidate?.durationDeltaMs === null || candidate?.durationDeltaMs === undefined
+                        ? null
+                        : Number.isFinite(Number(candidate?.durationDeltaMs))
+                          ? Math.trunc(Number(candidate.durationDeltaMs))
+                          : null,
+                      durationStatus: candidate?.durationStatus === "matched" || candidate?.durationStatus === "mismatch" || candidate?.durationStatus === "unavailable"
+                        ? candidate.durationStatus
+                        : "unavailable",
+                      titleScore: Number(candidate?.titleScore ?? 0),
+                      artistScore: Number(candidate?.artistScore ?? 0),
+                      combinedScore: Number(candidate?.combinedScore ?? 0),
+                      rejectionReason: candidate?.rejectionReason === null || candidate?.rejectionReason === undefined
+                        ? null
+                        : String(candidate.rejectionReason),
+                    }))
+                  : [],
+                selectedCandidate: failure?.diagnostics?.selectedCandidate
+                  ? {
+                      id: String(failure.diagnostics.selectedCandidate.id ?? ""),
+                      name: String(failure.diagnostics.selectedCandidate.name ?? ""),
+                      artist: String(failure.diagnostics.selectedCandidate.artist ?? ""),
+                      album: String(failure.diagnostics.selectedCandidate.album ?? ""),
+                      durationMs: Number.isFinite(Number(failure.diagnostics.selectedCandidate.durationMs))
+                        ? Math.trunc(Number(failure.diagnostics.selectedCandidate.durationMs))
+                        : 0,
+                      durationDeltaMs:
+                        failure.diagnostics.selectedCandidate.durationDeltaMs === null ||
+                        failure.diagnostics.selectedCandidate.durationDeltaMs === undefined
+                          ? null
+                          : Number.isFinite(Number(failure.diagnostics.selectedCandidate.durationDeltaMs))
+                            ? Math.trunc(Number(failure.diagnostics.selectedCandidate.durationDeltaMs))
+                            : null,
+                      durationStatus:
+                        failure.diagnostics.selectedCandidate.durationStatus === "matched" ||
+                        failure.diagnostics.selectedCandidate.durationStatus === "mismatch" ||
+                        failure.diagnostics.selectedCandidate.durationStatus === "unavailable"
+                          ? failure.diagnostics.selectedCandidate.durationStatus
+                          : "unavailable",
+                      titleScore: Number(failure.diagnostics.selectedCandidate.titleScore ?? 0),
+                      artistScore: Number(failure.diagnostics.selectedCandidate.artistScore ?? 0),
+                      combinedScore: Number(failure.diagnostics.selectedCandidate.combinedScore ?? 0),
+                      rejectionReason:
+                        failure.diagnostics.selectedCandidate.rejectionReason === null ||
+                        failure.diagnostics.selectedCandidate.rejectionReason === undefined
+                          ? null
+                          : String(failure.diagnostics.selectedCandidate.rejectionReason),
+                    }
+                  : null,
+                rejectionReason: String(failure?.diagnostics?.rejectionReason ?? ""),
+              },
+              retryEligible: Boolean(failure?.retryEligible),
+            } : undefined,
+          }))
+          .filter((track: TrackResult) => Boolean(track.id && track.name))
+      : [];
+
+    const processedTrackCount = Number.isFinite(Number(payload?.processedTrackCount))
+      ? Math.max(0, Math.trunc(Number(payload.processedTrackCount)))
+      : 0;
+    const transferredCount = Number.isFinite(Number(payload?.transferredCount))
+      ? Math.max(0, Math.trunc(Number(payload.transferredCount)))
+      : 0;
+    const failedCount = Number.isFinite(Number(payload?.failedCount))
+      ? Math.max(0, Math.trunc(Number(payload.failedCount)))
+      : failuresFromApi.length;
+    const total = Number.isFinite(Number(payload?.sourceTrackCount))
+      ? Math.max(0, Math.trunc(Number(payload.sourceTrackCount)))
+      : processedTrackCount || transferredCount + failedCount;
+    const targetPlaylistId = payload?.targetPlaylistId ? String(payload.targetPlaylistId) : null;
+    const targetPlaylistUrl = payload?.targetPlaylistUrl
+      ? String(payload.targetPlaylistUrl)
+      : targetPlaylistId
+        ? `https://music.youtube.com/playlist?list=${targetPlaylistId}`
+        : null;
+    const transferDuration = Number.isFinite(Number(payload?.transferDurationMs))
+      ? Math.max(0, Math.trunc(Number(payload.transferDurationMs)))
+      : 0;
+    const completedAt = payload?.completedAt ? String(payload.completedAt) : null;
+    const overallStatus = payload?.overallStatus === "success" || payload?.overallStatus === "partial" || payload?.overallStatus === "failure"
+      ? payload.overallStatus
+      : (transferredCount === 0 ? "failure" : failedCount > 0 ? "partial" : "success");
+
+    setFailedTracks(failuresFromApi);
+    setTransferTotal(total);
+    setTransferSucceeded(transferredCount);
+    setTransferTargetPlaylistId(targetPlaylistId);
+    setTransferTargetPlaylistUrl(targetPlaylistUrl);
+    setTransferDurationMs(transferDuration);
+    setTransferCompletedAt(completedAt);
+    setTransferOverallStatus(overallStatus);
+    setTransferProgress((current) =>
+      current
+        ? {
+            ...current,
+            status: "done",
+            sourceTrackCount: total,
+            processedTrackCount,
+            transferredCount,
+            failedCount,
+            targetPlaylistId,
+            targetPlaylistUrl,
+            transferDurationMs: transferDuration,
+            completedAt: completedAt ?? undefined,
+            overallStatus,
+            result: payload,
+          }
+        : current
+    );
+
+    if (total === 0) {
+      setTransferView("idle");
+      notify({
+        tone: "info",
+        title: "No tracks found",
+        description: "This playlist has no transferable tracks yet.",
+      });
+      transferResultAppliedRef.current = true;
+      transferNotificationShownRef.current = true;
+      return true;
+    }
+
+    if (overallStatus === "failure" || transferredCount === 0) {
+      setTransferView("error");
+    } else if (failedCount > 0) {
+      setTransferView("partial");
+    } else {
+      setTransferView("success");
+    }
+
+    transferResultAppliedRef.current = true;
+    if (options?.notify !== false && !transferNotificationShownRef.current) {
+      const tone = overallStatus === "failure" || transferredCount === 0 ? "error" : "success";
+      notify({
+        tone,
+        title:
+          overallStatus === "success"
+            ? "Transfer complete"
+            : overallStatus === "partial"
+              ? "Transfer finished with partial matches"
+              : "Transfer finished with no matches",
+        description: `${transferredCount} transferred, ${failedCount} failed.`,
+      });
+      transferNotificationShownRef.current = true;
+    }
+    return true;
+  }
+
+  async function runTransfer(
+    playlistId: string,
+    options?: {
+      retryTrackIds?: string[];
+      targetPlaylistId?: string | null;
+      matchMode?: "normal" | "relaxed";
+    }
+  ) {
+    let requestAborted = false;
     try {
       if (process.env.NODE_ENV !== "production") {
         console.log("[transfer:click] runTransfer invoked", {
@@ -1255,8 +1676,51 @@ export default function TransferPage() {
     setTransferTotal(0);
     setTransferSucceeded(0);
     setTransferTargetPlaylistId(null);
+    setTransferTargetPlaylistUrl(null);
+    setTransferCompletedAt(null);
+    setTransferDurationMs(0);
+    setTransferOverallStatus(null);
+    setTransferProgress(null);
+    transferResultAppliedRef.current = false;
+    transferNotificationShownRef.current = false;
+
+    const transferId = window.crypto.randomUUID();
+    setActiveTransferId(transferId);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20_000);
+    const timeoutId = setTimeout(() => controller.abort(), 75_000);
+
+    if (transferProgressPollRef.current !== null) {
+      window.clearInterval(transferProgressPollRef.current);
+      transferProgressPollRef.current = null;
+    }
+
+    const pollTransferProgress = async () => {
+      try {
+        const progressResponse = await fetch(`/api/transfer/progress?transferId=${encodeURIComponent(transferId)}`, {
+          cache: "no-store",
+        });
+        if (!progressResponse.ok) return;
+        const progress = await progressResponse.json().catch(() => null);
+        if (!progress) return;
+        setTransferProgress(progress);
+        if ((progress.status === "done" || progress.status === "error") && progress.result && !transferResultAppliedRef.current) {
+          applyTransferPayload(progress.result, { notify: true });
+        }
+        if (progress.status === "done" || progress.status === "error") {
+          if (transferProgressPollRef.current !== null) {
+            window.clearInterval(transferProgressPollRef.current);
+            transferProgressPollRef.current = null;
+          }
+        }
+      } catch {
+        // best effort only
+      }
+    };
+
+    void pollTransferProgress();
+    transferProgressPollRef.current = window.setInterval(() => {
+      void pollTransferProgress();
+    }, 1000);
 
     try {
       const response = await fetch("/api/transfer", {
@@ -1267,6 +1731,10 @@ export default function TransferPage() {
           targetPlatform: toPlatform,
           playlistId,
           playlistName: selectedPlaylist.name,
+          transferId,
+          retryTrackIds: options?.retryTrackIds ?? [],
+          targetPlaylistId: options?.targetPlaylistId ?? null,
+          matchMode: options?.matchMode ?? "normal",
         }),
         cache: "no-store",
         signal: controller.signal,
@@ -1285,70 +1753,22 @@ export default function TransferPage() {
         throw new Error(payload?.error ?? "Unable to transfer playlist right now.");
       }
 
-      const failuresFromApi: TrackResult[] = Array.isArray(payload?.failures)
-        ? payload.failures
-            .map((failure: any) => ({
-              id: String(failure?.sourceTrack?.id ?? ""),
-              name: String(failure?.sourceTrack?.name ?? ""),
-              artist: String(failure?.sourceTrack?.artist ?? ""),
-              imageUrl: failure?.sourceTrack?.imageUrl ? String(failure.sourceTrack.imageUrl) : undefined,
-              status: "failed" as const,
-              failureReason: String(failure?.reason ?? "Track could not be transferred."),
-            }))
-            .filter((track: TrackResult) => Boolean(track.id && track.name))
-        : [];
-
-      const processedTrackCount = Number.isFinite(Number(payload?.processedTrackCount))
-        ? Math.max(0, Math.trunc(Number(payload.processedTrackCount)))
-        : 0;
-      const transferredCount = Number.isFinite(Number(payload?.transferredCount))
-        ? Math.max(0, Math.trunc(Number(payload.transferredCount)))
-        : 0;
-      const failedCount = Number.isFinite(Number(payload?.failedCount))
-        ? Math.max(0, Math.trunc(Number(payload.failedCount)))
-        : failuresFromApi.length;
-      const total = processedTrackCount || transferredCount + failedCount;
-
-      setFailedTracks(failuresFromApi);
-      setTransferTotal(total);
-      setTransferSucceeded(transferredCount);
-      setTransferTargetPlaylistId(payload?.targetPlaylistId ? String(payload.targetPlaylistId) : null);
-
-      if (total === 0) {
-        setTransferView("idle");
+      applyTransferPayload(payload, { notify: true });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        requestAborted = true;
+        // We intentionally do not flip to error here. The progress poll keeps
+        // watching until the backend finishes and posts the final result.
         notify({
           tone: "info",
-          title: "No tracks found",
-          description: "This playlist has no transferable tracks yet.",
-        });
-        return;
-      }
-
-      if (transferredCount === 0) {
-        setTransferView("error");
-      } else if (failedCount > 0) {
-        setTransferView("partial");
-      } else {
-        setTransferView("success");
-      }
-
-      notify({
-        tone: "success",
-        title: transferredCount === total ? "Transfer complete" : "Transfer finished with partial matches",
-        description: `${transferredCount} transferred, ${failedCount} failed.`,
-      });
-    } catch (error) {
-      setTransferView("error");
-      if (error instanceof Error && error.name === "AbortError") {
-        notify({
-          tone: "error",
-          title: "Request timed out",
-          description: "Transfer took too long. Please try again.",
+          title: "Transfer still running",
+          description: "We are keeping an eye on the transfer progress.",
         });
         return;
       }
 
       const message = error instanceof Error ? error.message : "Unable to transfer tracks right now.";
+      setTransferView("error");
 
       notify({
         tone: "error",
@@ -1358,6 +1778,10 @@ export default function TransferPage() {
     } finally {
       clearTimeout(timeoutId);
       setIsPreparingTransfer(false);
+      if (!requestAborted && transferProgressPollRef.current !== null) {
+        window.clearInterval(transferProgressPollRef.current);
+        transferProgressPollRef.current = null;
+      }
     }
   }
 
@@ -1556,18 +1980,20 @@ export default function TransferPage() {
             Platform selector
           </h2>
 
-          <PlatformSelector
-            fromPlatform={fromPlatform}
-            toPlatform={toPlatform}
-            fromConnected={fromConnectedEffective}
-            toConnected={toConnectedEffective}
-            onFromSelect={handleFromSelect}
-            onToSelect={handleToSelect}
-            onFromConnect={handleFromConnect}
-            onToConnect={handleToConnect}
-            onFromDisconnect={handleFromDisconnect}
-            onToDisconnect={handleToDisconnect}
-          />
+          <div ref={platformSelectorAreaRef}>
+            <PlatformSelector
+              fromPlatform={fromPlatform}
+              toPlatform={toPlatform}
+              fromConnected={fromConnectedEffective}
+              toConnected={toConnectedEffective}
+              onFromSelect={handleFromSelect}
+              onToSelect={handleToSelect}
+              onFromConnect={handleFromConnect}
+              onToConnect={handleToConnect}
+              onFromDisconnect={handleFromDisconnect}
+              onToDisconnect={handleToDisconnect}
+            />
+          </div>
 
           {/* Divider */}
           <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: isMobile ? "20px 0" : "32px 0" }} />

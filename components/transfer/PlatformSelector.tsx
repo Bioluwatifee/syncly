@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useLayoutEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Platform } from "@/types";
 
 interface PlatformOption {
@@ -170,12 +170,12 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
 
   return (
     <div className="platform-side" style={{ position: "relative" }} ref={ref}>
-      {/* From/To label — shown inline above input on mobile */}
-      {isMobile && (
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px", marginBottom: 8 }}>
-          {label}
-        </div>
-      )}
+      <div
+        className="platform-side-mobile-label"
+        style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", fontWeight: 500, letterSpacing: "0.3px", marginBottom: 8 }}
+      >
+        {label}
+      </div>
 
       {/* Unified input + button container */}
       <div
@@ -333,11 +333,9 @@ export default function PlatformSelector({
   onFromConnect, onToConnect,
   onFromDisconnect, onToDisconnect,
 }: Props) {
-  // useLayoutEffect fires synchronously before paint — eliminates the
-  // desktop→mobile flash that useEffect causes on narrow viewports.
   const [isMobile, setIsMobile] = useState(false);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const mq = window.matchMedia("(max-width: 600px)");
     setIsMobile(mq.matches);
     const handler = (e: MediaQueryListEvent | MediaQueryList) => setIsMobile(e.matches);
@@ -359,9 +357,6 @@ export default function PlatformSelector({
       <div
         className="platform-selector-labels"
         style={{
-          display: isMobile ? "none" : "flex",
-          justifyContent: "space-between",
-          marginBottom: 14,
           width: "100%",
         }}
       >
@@ -374,9 +369,6 @@ export default function PlatformSelector({
         className="platform-selector-row"
         style={{
           display: "flex",
-          flexDirection: isMobile ? "column" : "row",
-          alignItems: isMobile ? "stretch" : "center",
-          gap: isMobile ? 20 : 16,
           width: "100%",
         }}
       >
@@ -394,7 +386,7 @@ export default function PlatformSelector({
         <div
           className="platform-swap-wrap"
           style={{
-            display: isMobile ? "none" : "flex",
+            display: "flex",
             justifyContent: "center",
             flexShrink: 0,
           }}
@@ -402,15 +394,15 @@ export default function PlatformSelector({
           <div
             className="swap-icon-circle"
             style={{
-              width: isMobile ? 34 : 40,
-              height: isMobile ? 34 : 40,
+              width: 40,
+              height: 40,
               borderRadius: "50%",
-              border: isMobile ? "1.25px solid rgba(255,255,255,0.25)" : "1.5px solid rgba(255,255,255,0.25)",
+              border: "1.5px solid rgba(255,255,255,0.25)",
               background: "transparent",
               display: "flex", alignItems: "center", justifyContent: "center",
               cursor: "pointer",
               transition: "border-color 0.2s, transform 0.3s",
-              transform: isMobile ? "rotate(90deg)" : "rotate(0deg)",
+              transform: "rotate(0deg)",
             }}
             onMouseEnter={e => {
               (e.currentTarget as HTMLElement).style.borderColor = "rgba(232,197,71,0.6)";
@@ -418,10 +410,10 @@ export default function PlatformSelector({
             }}
             onMouseLeave={e => {
               (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.25)";
-              (e.currentTarget as HTMLElement).style.transform = isMobile ? "rotate(90deg)" : "rotate(0deg)";
+              (e.currentTarget as HTMLElement).style.transform = "rotate(0deg)";
             }}
           >
-            <svg width={isMobile ? 16 : 18} height={isMobile ? 16 : 18} viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8 3L4 7l4 4" />
               <path d="M4 7h16" />
               <path d="M16 21l4-4-4-4" />

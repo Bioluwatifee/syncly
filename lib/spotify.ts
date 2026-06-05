@@ -27,20 +27,60 @@ export async function getSpotifyPlaylistTracks(
   accessToken: string
 ): Promise<Track[]> {
   const data = await spotifyFetch(
-    `/playlists/${playlistId}/tracks?limit=100`,
+    `/playlists/${playlistId}/items?limit=100`,
     accessToken
   );
-  return data.items
-    .filter((item: any) => item.track)
-    .map((item: any) => ({
-      id: item.track.id,
-      name: item.track.name,
-      artist: item.track.artists.map((a: any) => a.name).join(", "),
-      album: item.track.album.name,
-      durationMs: item.track.duration_ms,
-      imageUrl: item.track.album.images?.[0]?.url,
-      platformId: item.track.id,
-    }));
+  const items = Array.isArray(data?.items) ? data.items : [];
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[lib:spotify] playlist items raw response", {
+      playlistId,
+      rawItemsLength: items.length,
+      firstRawItem: items[0] ?? null,
+      firstRawItemKeys: items[0] ? Object.keys(items[0]) : [],
+      firstRawItemNestedItemKeys: items[0]?.item ? Object.keys(items[0].item) : [],
+    });
+  }
+
+  const parsed: Track[] = [];
+  let excludedNoTrack = 0;
+  let excludedMissingIdOrName = 0;
+  const parsedBefore = parsed.length;
+
+  for (const item of items) {
+    const track = item?.item ?? item?.track ?? item;
+    if (!track) {
+      excludedNoTrack += 1;
+      continue;
+    }
+    if (!track?.id || !track?.name) {
+      excludedMissingIdOrName += 1;
+      continue;
+    }
+
+    parsed.push({
+      id: track.id,
+      name: track.name,
+      artist: track.artists.map((a: any) => a.name).join(", "),
+      album: track.album.name,
+      durationMs: track.duration_ms,
+      imageUrl: track.album.images?.[0]?.url,
+      platformId: track.id,
+    });
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[lib:spotify] playlist items parse diagnostics", {
+      playlistId,
+      rawItemsLength: items.length,
+      parsedTracksOnPage: parsed.length - parsedBefore,
+      totalParsedTracks: parsed.length,
+      excludedNoTrack,
+      excludedMissingIdOrName,
+      firstParsedTrack: parsed[0] ?? null,
+    });
+  }
+
+  return parsed;
 }
 
 export async function createSpotifyPlaylist(

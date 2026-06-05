@@ -386,6 +386,7 @@ html, body {
 .platform-selector-labels { display: flex; justify-content: space-between; margin-bottom: 14px; }
 .platform-selector-row    { display: flex; flex-direction: row; align-items: center; gap: 16px; }
 .platform-side            { flex: 1; }
+.platform-side-mobile-label { display: none; }
 
 @media (max-width: 600px) {
   .platform-selector-labels { display: none; }
@@ -398,6 +399,7 @@ html, body {
   .platform-selector-row > * { width: 100% !important; }
   .platform-side            { flex: none !important; width: 100% !important; }
   .platform-swap-wrap       { display: none !important; }
+  .platform-side-mobile-label { display: block; }
 }
 
 /* ─── DemoSection: platform row stacks vertically on mobile ─────────────── */

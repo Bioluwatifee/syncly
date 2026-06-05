@@ -161,8 +161,12 @@ async function spotifyRequest(accessToken: string, endpoint: string) {
     const details = await response.text().catch(() => "");
     console.error("[spotify:request] upstream error", {
       endpoint,
+      requestUrl: `${SPOTIFY_API_BASE}${endpoint}`,
       status: response.status,
       statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      wwwAuthenticate: response.headers.get("www-authenticate"),
+      retryAfter: response.headers.get("retry-after"),
       body: details.slice(0, 600),
     });
     const retryAfterHeader = response.headers.get("retry-after");
@@ -204,16 +208,38 @@ async function getSpotifyPlaylistTracks(accessToken: string, playlistId: string)
   while (true) {
     const data = await spotifyRequest(
       accessToken,
-      `/playlists/${playlistId}/tracks?limit=${pageSize}&offset=${offset}`
+      `/playlists/${playlistId}/items?limit=${pageSize}&offset=${offset}`
     );
 
     const items = Array.isArray(data?.items) ? data.items : [];
     const apiTotal = parseTrackCount(data?.total);
     if (total === null && apiTotal !== null) total = apiTotal;
 
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[spotify:get] playlist items page", {
+        playlistId,
+        offset,
+        rawItemsLength: items.length,
+        firstRawItem: items[0] ?? null,
+        firstRawItemKeys: items[0] ? Object.keys(items[0]) : [],
+        firstRawItemNestedItemKeys: items[0]?.item ? Object.keys(items[0].item) : [],
+      });
+    }
+
+    let excludedNoTrack = 0;
+    let excludedMissingIdOrName = 0;
+    const parsedBefore = tracks.length;
+
     for (const item of items) {
-      const track = item?.track;
-      if (!track || !track?.id || !track?.name) continue;
+      const track = item?.item ?? item?.track ?? item;
+      if (!track) {
+        excludedNoTrack += 1;
+        continue;
+      }
+      if (!track?.id || !track?.name) {
+        excludedMissingIdOrName += 1;
+        continue;
+      }
 
       tracks.push({
         id: String(track.id),
@@ -224,6 +250,19 @@ async function getSpotifyPlaylistTracks(accessToken: string, playlistId: string)
         album: String(track?.album?.name ?? ""),
         durationMs: Number.isFinite(Number(track?.duration_ms)) ? Math.trunc(Number(track.duration_ms)) : 0,
         imageUrl: track?.album?.images?.[0]?.url ? String(track.album.images[0].url) : undefined,
+      });
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[spotify:get] playlist items page parse diagnostics", {
+        playlistId,
+        offset,
+        rawItemsLength: items.length,
+        parsedTracksOnPage: tracks.length - parsedBefore,
+        totalParsedTracks: tracks.length,
+        excludedNoTrack,
+        excludedMissingIdOrName,
+        firstParsedTrack: tracks[parsedBefore] ?? null,
       });
     }
 
@@ -288,7 +327,7 @@ async function resolveSpotifyAccessToken(request: NextRequest) {
   if (process.env.NODE_ENV !== "production") {
     console.log("[spotify:resolve] cookie snapshot", {
       host: getCanonicalHostLabel(),
-      requestHost: request.nextUrl.host,
+      appOrigin: getCanonicalAppOrigin(),
       accessTokenPresent: Boolean(accessToken),
       refreshTokenPresent: Boolean(refreshToken),
       expiresAt,
@@ -343,7 +382,7 @@ export async function GET(request: NextRequest) {
       console.log("[spotify:get] incoming request", {
         resource,
         host: getCanonicalHostLabel(),
-        requestHost: request.nextUrl.host,
+        appOrigin: getCanonicalAppOrigin(),
         hasCookieHeader: Boolean(request.headers.get("cookie")),
       });
     }
@@ -396,7 +435,7 @@ export async function GET(request: NextRequest) {
       }
 
       const data = await runWithSpotifyAuth((token) =>
-        spotifyRequest(token, `/playlists/${playlistId}/tracks?limit=1`)
+        spotifyRequest(token, `/playlists/${playlistId}/items?limit=1`)
       );
       let total = parseTrackCount(data?.total);
 
