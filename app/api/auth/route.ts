@@ -222,7 +222,14 @@ async function beginOAuthFlow(
   return response;
 }
 
-async function exchangeSpotifyCodeForToken(code: string) {
+type OAuthTokenExchangeResult = {
+  accessToken: string;
+  refreshToken: string | undefined;
+  expiresIn: number;
+  scope?: string;
+};
+
+async function exchangeSpotifyCodeForToken(code: string): Promise<OAuthTokenExchangeResult> {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
   const redirectUri = process.env.SPOTIFY_REDIRECT_URI;
@@ -260,7 +267,7 @@ async function exchangeSpotifyCodeForToken(code: string) {
   };
 }
 
-async function exchangeYouTubeCodeForToken(code: string) {
+async function exchangeYouTubeCodeForToken(code: string): Promise<OAuthTokenExchangeResult> {
   const clientId = process.env.YOUTUBE_CLIENT_ID;
   const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
   const redirectUri = process.env.YOUTUBE_REDIRECT_URI;
@@ -292,6 +299,7 @@ async function exchangeYouTubeCodeForToken(code: string) {
     accessToken: payload.access_token as string,
     refreshToken: payload.refresh_token as string | undefined,
     expiresIn: payload.expires_in as number,
+    scope: payload.scope as string | undefined,
   };
 }
 

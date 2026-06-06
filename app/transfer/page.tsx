@@ -10,6 +10,7 @@ import CheckMarkIcon from "@/components/ui/CheckMarkIcon";
 const SPOTIFY_PLAYLIST_COUNT_CACHE_KEY = "syncly_spotify_playlist_count_cache_v2";
 const YOUTUBE_PLAYLIST_COUNT_CACHE_KEY = "syncly_youtube_playlist_count_cache_v1";
 const SPOTIFY_FORCE_FRESH_AUTH_KEY = "syncly_force_spotify_fresh_auth_once";
+const PLAYLISTS_SESSION_CACHE_KEY = "syncly_playlists_session_cache_v1";
 const PLAYLIST_COUNT_CACHE_TTL_MS = 15 * 60 * 1000;
 const PLAYLIST_COUNT_MIN_GAP_MS = 1000;
 const PLAYLIST_COUNT_COOLDOWN_MS = 5 * 60 * 1000;
@@ -78,13 +79,21 @@ interface TrackResult {
   };
 }
 
-type TransferViewState = "idle" | "transferring" | "success" | "partial" | "error";
+type TransferViewState = "idle" | "transferring" | "success" | "partial" | "error" | "postRetryFailure";
 
 interface TransferProgress {
   transferId: string;
   status: "idle" | "running" | "done" | "error";
   playlistName?: string;
   sourceTrackCount?: number;
+  trackResults?: Array<{
+    id: string;
+    name: string;
+    artist: string;
+    imageUrl?: string;
+    status: "pending" | "success" | "failed";
+    failureReason?: string;
+  }>;
   processedTrackCount?: number;
   transferredCount?: number;
   failedCount?: number;
@@ -253,7 +262,7 @@ function PlatformRow() {
   );
 }
 
-// ─── Copy failed songs list button ───────────────────────────────────────────
+// ─── Copy list button ─────────────────────────────────────────────────────────
 function CopyFailedButton({ tracks }: { tracks: TrackResult[] }) {
   const [copied, setCopied] = useState(false);
   function handleCopy() {
@@ -267,21 +276,20 @@ function CopyFailedButton({ tracks }: { tracks: TrackResult[] }) {
     <button
       onClick={handleCopy}
       style={{
-        display: "flex", alignItems: "center", gap: 6,
-        background: "transparent", border: "1px solid rgba(255,255,255,0.15)",
-        borderRadius: 100, padding: "10px 18px",
-        fontSize: 13, color: "rgba(255,255,255,0.6)",
+        display: "inline-flex", alignItems: "center", gap: 6,
+        background: "transparent", border: "none", padding: 0,
+        fontSize: 13, color: "rgba(255,255,255,0.4)",
         fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
-        cursor: "pointer", transition: "border-color 0.2s, color 0.2s",
-        marginTop: 8,
+        cursor: "pointer", transition: "color 0.2s",
+        marginTop: 4,
       }}
-      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.3)"; (e.currentTarget as HTMLElement).style.color = "#fff"; }}
-      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.15)"; (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.6)"; }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.7)"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.4)"; }}
     >
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
       </svg>
-      {copied ? "Copied!" : "Copy failed songs list"}
+      {copied ? "Copied!" : "Copy list"}
     </button>
   );
 }
@@ -317,26 +325,43 @@ function FailedTrackList({ tracks, isMobile, showReasons }: { tracks: TrackResul
 }
 
 // ─── State: Transferring ──────────────────────────────────────────────────────
+// Shows roughly 4-5 rows before scrolling, matching the approved mockup.
+const TRANSFERRING_LIST_MAX_HEIGHT = 280;
+
 function TransferringState({
-  tracks,
+  progress,
   total,
   isMobile,
   playlist,
   isRetry,
-}: { tracks: TrackResult[]; total: number; isMobile: boolean; playlist: PlaylistItem; isRetry?: boolean }) {
-  const done = tracks.filter(t => t.status !== "pending").length;
+  onCancel,
+}: {
+  progress: TransferProgress | null;
+  total: number;
+  isMobile: boolean;
+  playlist: PlaylistItem;
+  isRetry?: boolean;
+  onCancel: () => void;
+}) {
+  const trackTotal = Math.max(progress?.sourceTrackCount ?? total, 1);
+  const liveTracks = progress?.trackResults ?? [];
+  const done = liveTracks.length > 0
+    ? liveTracks.filter(t => t.status !== "pending").length
+    : (progress?.processedTrackCount ?? 0);
+
   return (
     <>
-      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
+      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 16 : 24, fontWeight: 400, color: "rgba(255,255,255,0.9)", marginBottom: 16, letterSpacing: "0.1px" }}>
         {isRetry ? `Retrying ${total} failed tracks` : "Transferring playlist…"}
       </h2>
       <PlaylistCard playlist={playlist} retryCount={isRetry ? total : undefined} />
-      <div style={{ margin: "4px 0" }}>
-        {tracks.map((t, i) => (
+      <ProgressBar done={done} total={trackTotal} label={`${done} out of ${trackTotal} in progress`} />
+      <div style={{ marginTop: 4, maxHeight: TRANSFERRING_LIST_MAX_HEIGHT, overflowY: "auto" }}>
+        {liveTracks.map((t, i) => (
           <div key={t.id} style={{
             display: "flex", alignItems: "center", gap: 12,
             padding: isMobile ? "14px 4px" : "13px 4px",
-            borderBottom: i < tracks.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
+            borderBottom: i < liveTracks.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
           }}>
             <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", width: 18, textAlign: "right", flexShrink: 0 }}>{i + 1}.</span>
             <div style={{ width: 40, height: 40, borderRadius: 7, overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,0.08)" }}>
@@ -352,7 +377,19 @@ function TransferringState({
           </div>
         ))}
       </div>
-      <ProgressBar done={done} total={total} label={`${done} out of ${total} in progress`} />
+      <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+        <button
+          onClick={onCancel}
+          style={{
+            ...btnWhite,
+            flex: "none",
+            width: isMobile ? "100%" : "45%",
+            minWidth: isMobile ? "auto" : 200,
+          }}
+          onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+          onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
+        >Cancel transfer</button>
+      </div>
     </>
   );
 }
@@ -367,7 +404,7 @@ function SuccessState({
 }: { isMobile: boolean; playlist: PlaylistItem; total: number; targetPlaylistId: string | null; onStartAnother: () => void }) {
   return (
     <>
-      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
+      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 16 : 24, fontWeight: 400, color: "rgba(255,255,255,0.9)", marginBottom: 16, letterSpacing: "0.1px" }}>
         Transferring playlist…
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "32px 20px" : "48px 32px", textAlign: "center" }}>
@@ -376,24 +413,36 @@ function SuccessState({
           {playlist.name} by {playlist.owner}
         </div>
         <div style={{ marginBottom: 28 }}><PlatformRow /></div>
-        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
-          <a
-            href={targetPlaylistId ? `https://music.youtube.com/playlist?list=${targetPlaylistId}` : "https://music.youtube.com"}
-            target="_blank"
-            rel="noreferrer"
-            style={{ ...btnWhite, textDecoration: "none", textAlign: "center" }}
-            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
-            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-          >Open YouTube Music</a>
-          <button style={btnYellow} onClick={onStartAnother}
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center" }}>
+          <button style={{ ...btnYellow, ...(isMobile ? {} : { maxWidth: 280 }) }} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
         </div>
       </div>
-      <ProgressBar done={total} total={Math.max(total, 1)} label={`${total} out of ${total} transferred`} />
     </>
   );
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function formatDurationMs(ms: number): string {
+  if (!ms || ms <= 0) return "—";
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatCompletedAt(completedAt: string | null): string | null {
+  if (!completedAt) return null;
+  try {
+    const date = new Date(completedAt);
+    if (isNaN(date.getTime())) return null;
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return null;
+  }
 }
 
 // ─── State: Partial Match ─────────────────────────────────────────────────────
@@ -422,15 +471,14 @@ function PartialState({
   const completionLabel = formatCompletedAt(completedAt);
   return (
     <>
-      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
+      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 16 : 24, fontWeight: 400, color: "rgba(255,255,255,0.9)", marginBottom: 16, letterSpacing: "0.1px" }}>
         Transfer result
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
         <div style={{ textAlign: "center", marginBottom: 4 }}>
-          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>Transfer Complete</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>{transferred} transferred successfully, {failed} could not be matched</div>
-          <SplitBar success={transferred} failed={failed} total={Math.max(sourceTrackCount, 1)} />
-          <div style={{ marginTop: 20, marginBottom: 4 }}><PlatformRow /></div>
+          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>{transferred} out of {sourceTrackCount} songs transferred</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>{failed} {failed === 1 ? "song" : "songs"} could not be found</div>
+          <div style={{ marginBottom: 4 }}><PlatformRow /></div>
         </div>
         <div style={{ display: "grid", gap: 10, margin: "18px 0 20px", textAlign: "left" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
@@ -446,70 +494,71 @@ function PartialState({
             <span>Duration</span><strong style={{ color: "#fff" }}>{formatDurationMs(transferDurationMs)}</strong>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
-            <span>Completed</span><strong style={{ color: "#fff" }}>{completionLabel ?? "—"}</strong>
+            <span>Time</span><strong style={{ color: "#fff" }}>{completionLabel ?? "—"}</strong>
           </div>
         </div>
-        <FailedTrackList tracks={failedTracks} isMobile={isMobile} showReasons />
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+        <div style={{ maxHeight: 320, overflowY: "auto" }}>
+          <FailedTrackList tracks={failedTracks} isMobile={isMobile} showReasons />
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
           <CopyFailedButton tracks={failedTracks} />
         </div>
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
-          <a
-            href={targetPlaylistUrl || "https://music.youtube.com"}
-            target="_blank"
-            rel="noreferrer"
-            style={{ ...btnWhite, textDecoration: "none", textAlign: "center" }}
+          <button style={btnWhite} onClick={onRetry}
             onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
             onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-          >Open Playlist</a>
-          <button style={btnWhite}
-            onClick={onRetry}
-            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
-            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-          >Retry Failed Tracks</button>
+          >Retry failed songs ({failed})</button>
           <button style={btnYellow} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
         </div>
       </div>
-      <ProgressBar done={transferred} total={Math.max(sourceTrackCount, 1)} label={`${transferred} out of ${sourceTrackCount} completed`} sublabel={`${failed} songs not matched`} />
     </>
   );
 }
 
-// ─── State: Post-retry partial/full failure (no more retry allowed) ───────────
-function PostRetryFailureState({ failedTracks, totalRetried, isMobile }: { failedTracks: TrackResult[]; totalRetried: number; isMobile: boolean }) {
-  const transferred = totalRetried - failedTracks.length;
+// ─── State: Post-retry failure (Component 20 — retry pass already used) ──────
+function PostRetryFailureState({
+  playlist,
+  failedTracks,
+  totalRetried,
+  isMobile,
+  onStartAnother,
+}: {
+  playlist: PlaylistItem;
+  failedTracks: TrackResult[];
+  totalRetried: number;
+  isMobile: boolean;
+  onStartAnother: () => void;
+}) {
   return (
     <>
-      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
-        Transferring playlist…
+      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 16 : 24, fontWeight: 400, color: "rgba(255,255,255,0.9)", marginBottom: 16, letterSpacing: "0.1px" }}>
+        Transfer result
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
         <div style={{ textAlign: "center", marginBottom: 4 }}>
           <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>
-            Oops! {transferred} out of {totalRetried} songs transferred
+            Oops! Retry failed
           </div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>
-            It&apos;s on us, {failedTracks.length} {failedTracks.length === 1 ? "song" : "songs"} still failed to transfer
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16, lineHeight: 1.5, maxWidth: 440, marginLeft: "auto", marginRight: "auto" }}>
+            These songs couldn&apos;t be transferred after multiple attempts. Advanced search is coming to Syncly soon.
+            Copy the list of failed songs for later and continue transferring your other playlists.
           </div>
-          <PlatformRow />
+          <div style={{ marginBottom: 4 }}><PlatformRow /></div>
         </div>
-        {/* Failed tracks with reasons */}
-        {/* TODO: Replace placeholder reasons with real API error responses when Spotify and YouTube Music OAuth is wired up */}
-        <div style={{ marginTop: 16 }}>
+        <div style={{ margin: "18px 0" }}>
+          <PlaylistCard playlist={playlist} retryCount={totalRetried} />
+        </div>
+        <div style={{ maxHeight: 320, overflowY: "auto" }}>
           <FailedTrackList tracks={failedTracks} isMobile={isMobile} showReasons />
         </div>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
           <CopyFailedButton tracks={failedTracks} />
         </div>
-        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
-          <button style={btnWhite}
-            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
-            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-          >Open YouTube Music</button>
-          <button style={btnYellow}
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center" }}>
+          <button style={{ ...btnYellow, ...(isMobile ? {} : { maxWidth: 280 }) }} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
@@ -546,13 +595,13 @@ function ErrorState({
   const completionLabel = formatCompletedAt(completedAt);
   return (
     <>
-      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 22 : 26, fontWeight: 400, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
+      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 16 : 24, fontWeight: 400, color: "rgba(255,255,255,0.9)", marginBottom: 16, letterSpacing: "0.1px" }}>
         Transfer result
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Transfer Complete</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>No tracks were transferred successfully.</div>
+          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 8 }}>We couldn&apos;t transfer any song</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>This is on us not you, please try again!</div>
           <PlatformRow />
         </div>
         <div style={{ marginBottom: 24 }}><PlaylistCard playlist={playlist} /></div>
@@ -570,26 +619,20 @@ function ErrorState({
             <span>Duration</span><strong style={{ color: "#fff" }}>{formatDurationMs(transferDurationMs)}</strong>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
-            <span>Completed</span><strong style={{ color: "#fff" }}>{completionLabel ?? "—"}</strong>
+            <span>Time</span><strong style={{ color: "#fff" }}>{completionLabel ?? "—"}</strong>
           </div>
         </div>
-        <FailedTrackList tracks={failedTracks} isMobile={isMobile} showReasons />
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+        <div style={{ maxHeight: 320, overflowY: "auto" }}>
+          <FailedTrackList tracks={failedTracks} isMobile={isMobile} showReasons />
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
           <CopyFailedButton tracks={failedTracks} />
         </div>
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
-          <a
-            href={targetPlaylistUrl || "https://music.youtube.com"}
-            target="_blank"
-            rel="noreferrer"
-            style={{ ...btnWhite, textDecoration: "none", textAlign: "center" }}
-            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
-            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-          >Open Playlist</a>
           <button style={btnWhite} onClick={onTryAgain}
             onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
             onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-          >Retry Failed Tracks</button>
+          >Try again</button>
           <button style={btnYellow} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
@@ -619,6 +662,7 @@ export default function TransferPage() {
   const [hasAttemptedSpotifyLoad, setHasAttemptedSpotifyLoad] = useState(false);
   const [disconnectTarget, setDisconnectTarget] = useState<"spotify" | "youtube" | null>(null);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [showCancelTransferConfirm, setShowCancelTransferConfirm] = useState(false);
   const [hostReady, setHostReady] = useState(true);
   const [isPreparingTransfer, setIsPreparingTransfer] = useState(false);
   const [playlistCountLoadingId, setPlaylistCountLoadingId] = useState<string | null>(null);
@@ -642,6 +686,9 @@ export default function TransferPage() {
   const platformSelectorAreaRef = useRef<HTMLDivElement | null>(null);
   const transferButtonAreaRef = useRef<HTMLDivElement | null>(null);
   const transferProgressPollRef = useRef<number | null>(null);
+  const transferAbortControllerRef = useRef<AbortController | null>(null);
+  const transferCancelledRef = useRef(false);
+  const transferIsRetryAttemptRef = useRef(false);
   const transferResultAppliedRef = useRef(false);
   const transferNotificationShownRef = useRef(false);
 
@@ -924,6 +971,30 @@ export default function TransferPage() {
         setSelectedId(sourcePlaylistIdParam);
       }
 
+      // When returning from destination OAuth, restore cached playlists instantly
+      // so the list never flickers or reloads — the source hasn't changed.
+      if (connectSide === "to") {
+        try {
+          const raw = window.sessionStorage.getItem(PLAYLISTS_SESSION_CACHE_KEY);
+          if (raw) {
+            const cached = JSON.parse(raw) as {
+              platform: string;
+              playlists: PlaylistItem[];
+              selectedId: string | null;
+            };
+            const expectedPlatform = fromParam ?? fromPlatform;
+            if (cached.platform === expectedPlatform && Array.isArray(cached.playlists) && cached.playlists.length > 0) {
+              setPlaylists(cached.playlists);
+              setHasLoadedSpotifyPlaylists(true);
+              if (cached.selectedId) setSelectedId(cached.selectedId);
+            }
+            window.sessionStorage.removeItem(PLAYLISTS_SESSION_CACHE_KEY);
+          }
+        } catch {
+          // ignore — sessionStorage may be unavailable
+        }
+      }
+
       if (authResult === "spotify_success") {
         setSpotifyAccountConnected(true);
         setSpotifySessionExpired(false);
@@ -1192,6 +1263,20 @@ export default function TransferPage() {
         window.localStorage.removeItem(SPOTIFY_FORCE_FRESH_AUTH_KEY);
       }
     }
+
+    // Save playlists before navigating so they can be restored instantly on return,
+    // avoiding a visible reload/flash when the user comes back after connecting destination.
+    if (playlists.length > 0 && fromPlatform && typeof window !== "undefined") {
+      try {
+        window.sessionStorage.setItem(
+          PLAYLISTS_SESSION_CACHE_KEY,
+          JSON.stringify({ platform: fromPlatform, playlists, selectedId })
+        );
+      } catch {
+        // ignore — sessionStorage may be unavailable
+      }
+    }
+
     window.location.href = authUrl.toString();
   }
 
@@ -1323,6 +1408,48 @@ export default function TransferPage() {
     setActiveTransferPlaylist(null);
     transferResultAppliedRef.current = false;
     transferNotificationShownRef.current = false;
+    transferIsRetryAttemptRef.current = false;
+    setShowCancelTransferConfirm(false);
+  }
+
+  function handleRequestCancelTransfer() {
+    if (transferView !== "transferring") return;
+    setShowCancelTransferConfirm(true);
+  }
+
+  function handleConfirmCancelTransfer() {
+    setShowCancelTransferConfirm(false);
+    transferCancelledRef.current = true;
+
+    // Tell the backend to stop processing further tracks. Best effort — fire
+    // and forget so the UI resets immediately regardless of network latency.
+    const transferIdToCancel = activeTransferId;
+    if (transferIdToCancel) {
+      void fetch("/api/transfer/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transferId: transferIdToCancel }),
+        cache: "no-store",
+        keepalive: true,
+      }).catch(() => {
+        // best effort only — the abort below still stops the client side.
+      });
+    }
+
+    if (transferAbortControllerRef.current) {
+      transferAbortControllerRef.current.abort();
+      transferAbortControllerRef.current = null;
+    }
+    if (transferProgressPollRef.current !== null) {
+      window.clearInterval(transferProgressPollRef.current);
+      transferProgressPollRef.current = null;
+    }
+    notify({
+      tone: "info",
+      title: "Transfer cancelled",
+      description: "We've stopped this transfer. Songs already added to the destination playlist will remain there.",
+    });
+    resetTransferSession();
   }
 
   function handleRetry() {
@@ -1569,7 +1696,12 @@ export default function TransferPage() {
       return true;
     }
 
-    if (overallStatus === "failure" || transferredCount === 0) {
+    if (transferIsRetryAttemptRef.current && failedCount > 0) {
+      // This was a retry pass (one allowed) and some tracks still failed —
+      // show the dedicated post-retry-failure state instead of the normal
+      // partial/error screens, since no further retry is offered.
+      setTransferView("postRetryFailure");
+    } else if (overallStatus === "failure" || transferredCount === 0) {
       setTransferView("error");
     } else if (failedCount > 0) {
       setTransferView("partial");
@@ -1687,6 +1819,9 @@ export default function TransferPage() {
     const transferId = window.crypto.randomUUID();
     setActiveTransferId(transferId);
     const controller = new AbortController();
+    transferAbortControllerRef.current = controller;
+    transferCancelledRef.current = false;
+    transferIsRetryAttemptRef.current = Boolean(options?.retryTrackIds && options.retryTrackIds.length > 0);
     const timeoutId = setTimeout(() => controller.abort(), 75_000);
 
     if (transferProgressPollRef.current !== null) {
@@ -1695,6 +1830,7 @@ export default function TransferPage() {
     }
 
     const pollTransferProgress = async () => {
+      if (transferCancelledRef.current) return;
       try {
         const progressResponse = await fetch(`/api/transfer/progress?transferId=${encodeURIComponent(transferId)}`, {
           cache: "no-store",
@@ -1757,8 +1893,12 @@ export default function TransferPage() {
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         requestAborted = true;
-        // We intentionally do not flip to error here. The progress poll keeps
-        // watching until the backend finishes and posts the final result.
+        if (transferCancelledRef.current) {
+          // User explicitly cancelled — handleCancelTransfer already reset the UI.
+          return;
+        }
+        // Do not flip to error — the progress poll keeps watching until the
+        // backend finishes and posts the final result.
         notify({
           tone: "info",
           title: "Transfer still running",
@@ -1767,13 +1907,14 @@ export default function TransferPage() {
         return;
       }
 
-      const message = error instanceof Error ? error.message : "Unable to transfer tracks right now.";
-      setTransferView("error");
-
+      // Non-abort error (e.g. gateway timeout, network blip): the backend may
+      // have already finished successfully. Keep the poll alive so it can
+      // deliver the real result instead of showing a premature error screen.
+      requestAborted = true;
       notify({
-        tone: "error",
-        title: "Could not transfer playlist",
-        description: message,
+        tone: "info",
+        title: "Transfer still running",
+        description: "Checking for results…",
       });
     } finally {
       clearTimeout(timeoutId);
@@ -2043,10 +2184,11 @@ export default function TransferPage() {
 
           {transferView === "transferring" && activeTransferPlaylist && (
             <TransferringState
-              tracks={failedTracks}
+              progress={transferProgress}
               total={Math.max(transferTotal || activeTransferPlaylist.trackCount || 1, 1)}
               isMobile={isMobile}
               playlist={activeTransferPlaylist}
+              onCancel={handleRequestCancelTransfer}
             />
           )}
 
@@ -2064,8 +2206,11 @@ export default function TransferPage() {
             <PartialState
               failedTracks={failedTracks}
               isMobile={isMobile}
-              total={transferTotal}
+              sourceTrackCount={transferTotal}
               transferred={transferSucceeded}
+              transferDurationMs={transferDurationMs}
+              completedAt={transferCompletedAt}
+              targetPlaylistUrl={transferTargetPlaylistUrl}
               onRetry={handleRetry}
               onStartAnother={resetTransferSession}
             />
@@ -2075,7 +2220,23 @@ export default function TransferPage() {
             <ErrorState
               isMobile={isMobile}
               playlist={activeTransferPlaylist}
+              failedTracks={failedTracks}
+              sourceTrackCount={transferTotal}
+              transferredCount={transferSucceeded}
+              transferDurationMs={transferDurationMs}
+              completedAt={transferCompletedAt}
+              targetPlaylistUrl={transferTargetPlaylistUrl}
               onTryAgain={handleRetry}
+              onStartAnother={resetTransferSession}
+            />
+          )}
+
+          {transferView === "postRetryFailure" && activeTransferPlaylist && (
+            <PostRetryFailureState
+              playlist={activeTransferPlaylist}
+              failedTracks={failedTracks}
+              totalRetried={transferTotal}
+              isMobile={isMobile}
               onStartAnother={resetTransferSession}
             />
           )}
@@ -2206,6 +2367,127 @@ export default function TransferPage() {
                 }}
               >
                 {isDisconnecting ? "Resetting..." : "Reset connection"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCancelTransferConfirm && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            backdropFilter: "blur(3px)",
+            WebkitBackdropFilter: "blur(3px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 999,
+            padding: isMobile ? "12px" : "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 460,
+              background: "#131316",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 16,
+              padding: isMobile ? "18px 16px 20px" : "20px 22px 24px",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
+              position: "relative",
+            }}
+          >
+            <button
+              onClick={() => setShowCancelTransferConfirm(false)}
+              aria-label="Close modal"
+              style={{
+                position: "absolute",
+                top: 10,
+                right: 10,
+                width: 30,
+                height: 30,
+                minWidth: 30,
+                minHeight: 30,
+                borderRadius: 999,
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(255,255,255,0.03)",
+                color: "rgba(255,255,255,0.72)",
+                fontSize: 18,
+                lineHeight: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+                cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            >
+              ×
+            </button>
+            <h3
+              style={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 22,
+                lineHeight: 1.2,
+                color: "#f0ede8",
+                margin: "0 0 10px",
+                paddingRight: 36,
+              }}
+            >
+              Cancel this transfer?
+            </h3>
+            <p
+              style={{
+                fontSize: 14,
+                color: "rgba(255,255,255,0.58)",
+                lineHeight: 1.5,
+                margin: "0 0 26px",
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            >
+              We&apos;ll stop the transfer right away. Songs already added to the destination playlist will remain there — this can&apos;t be undone.
+            </p>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                gap: isMobile ? 6 : 8,
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                onClick={() => setShowCancelTransferConfirm(false)}
+                style={{
+                  ...btnWhite,
+                  flex: "0 0 auto",
+                  padding: isMobile ? "10px 14px" : "10px 20px",
+                  fontSize: isMobile ? 13 : 14,
+                  fontWeight: 500,
+                  whiteSpace: "nowrap",
+                  borderRadius: 8,
+                  color: "#0a0a0b",
+                }}
+              >
+                Keep transferring
+              </button>
+              <button
+                onClick={handleConfirmCancelTransfer}
+                style={{
+                  ...btnWhite,
+                  flex: "0 0 auto",
+                  padding: isMobile ? "10px 14px" : "10px 20px",
+                  fontSize: isMobile ? 13 : 14,
+                  fontWeight: 500,
+                  whiteSpace: "nowrap",
+                  borderRadius: 8,
+                  background: "#e8c547",
+                  color: "#0a0a0b",
+                }}
+              >
+                Cancel transfer
               </button>
             </div>
           </div>

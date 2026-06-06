@@ -13,7 +13,7 @@ import {
   getSessionIdFromRequest,
   setPlatformSession,
 } from "@/lib/oauth-session";
-import { clearTransferProgress, upsertTransferProgress } from "@/lib/transfer-progress";
+import { clearTransferProgress, clearTransferCancellation, isTransferCancellationRequested, upsertTransferProgress, type TrackResultSnapshot } from "@/lib/transfer-progress";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -1070,6 +1070,23 @@ export async function POST(request: NextRequest) {
   const totalBatches = trackBatches.length;
   const cookieHeader = request.headers.get("cookie") ?? "";
 
+  // Live per-track results — seeded as "pending" so the UI can render the full
+  // list immediately, then flipped to "success"/"failed" as each track resolves.
+  const trackResultsSnapshot: TrackResultSnapshot[] = tracksToProcess.map((track) => ({
+    id: track.id,
+    name: track.name,
+    artist: track.artist,
+    imageUrl: track.imageUrl,
+    status: "pending",
+  }));
+  function markTrackResult(trackId: string, patch: Partial<TrackResultSnapshot>): TrackResultSnapshot[] {
+    const idx = trackResultsSnapshot.findIndex((entry) => entry.id === trackId);
+    if (idx >= 0) {
+      trackResultsSnapshot[idx] = { ...trackResultsSnapshot[idx], ...patch };
+    }
+    return [...trackResultsSnapshot];
+  }
+
   upsertTransferProgress(transferId, {
     status: "running",
     sourceTrackCount: tracksToProcess.length,
@@ -1082,10 +1099,19 @@ export async function POST(request: NextRequest) {
     batchSize: 0,
     targetPlaylistId,
     targetPlaylistUrl: targetPlaylistId ? `https://music.youtube.com/playlist?list=${targetPlaylistId}` : null,
+    trackResults: [...trackResultsSnapshot],
   });
 
+  let cancelledByUser = false;
+
   try {
+    batchLoop:
     for (const [batchIndex, batch] of trackBatches.entries()) {
+      if (isTransferCancellationRequested(transferId)) {
+        cancelledByUser = true;
+        break;
+      }
+
       console.log("[transfer] processing batch", {
         elapsedMs: Date.now() - routeStartedAt,
         batchIndex: batchIndex + 1,
@@ -1101,6 +1127,11 @@ export async function POST(request: NextRequest) {
       });
 
       for (const [trackIndexInBatch, sourceTrack] of batch.entries()) {
+        if (isTransferCancellationRequested(transferId)) {
+          cancelledByUser = true;
+          break batchLoop;
+        }
+
         upsertTransferProgress(transferId, {
           currentTrackName: sourceTrack.name,
           currentTrackArtist: sourceTrack.artist,
@@ -1148,6 +1179,10 @@ export async function POST(request: NextRequest) {
             transferredCount,
             failedCount: failures.length,
             batchProcessedCount: trackIndexInBatch + 1,
+            trackResults: markTrackResult(sourceTrack.id, {
+              status: "failed",
+              failureReason: matchResult.diagnostics.rejectionReason || "No sufficiently close YouTube match found.",
+            }),
           });
           await sleep(TRANSFER_STEP_DELAY_MS);
           continue;
@@ -1187,6 +1222,10 @@ export async function POST(request: NextRequest) {
               transferredCount,
               failedCount: failures.length,
               batchProcessedCount: trackIndexInBatch + 1,
+              trackResults: markTrackResult(sourceTrack.id, {
+                status: "failed",
+                failureReason: addPayload?.error ?? "Failed to add matched track to YouTube playlist.",
+              }),
             });
             await sleep(TRANSFER_STEP_DELAY_MS);
             continue;
@@ -1199,6 +1238,7 @@ export async function POST(request: NextRequest) {
             transferredCount,
             failedCount: failures.length,
             batchProcessedCount: trackIndexInBatch + 1,
+            trackResults: markTrackResult(sourceTrack.id, { status: "success" }),
           });
         } catch {
           failures.push({
@@ -1216,6 +1256,10 @@ export async function POST(request: NextRequest) {
             transferredCount,
             failedCount: failures.length,
             batchProcessedCount: trackIndexInBatch + 1,
+            trackResults: markTrackResult(sourceTrack.id, {
+              status: "failed",
+              failureReason: "Failed to add matched track to YouTube playlist.",
+            }),
           });
         }
 
@@ -1240,6 +1284,51 @@ export async function POST(request: NextRequest) {
       failedCount: failures.length,
       result: null,
     });
+    return response;
+  }
+
+  if (cancelledByUser) {
+    console.log("[transfer] cancelled by user", {
+      elapsedMs: Date.now() - routeStartedAt,
+      transferId,
+      processedTrackCount,
+      transferredCount,
+      failedCount: failures.length,
+    });
+
+    const cancelledCompletedAt = new Date().toISOString();
+    const cancelledDurationMs = Date.now() - routeStartedAt;
+    const cancelledTargetPlaylistUrl = targetPlaylistId ? `https://music.youtube.com/playlist?list=${targetPlaylistId}` : null;
+
+    const response = NextResponse.json({
+      transferId,
+      playlistName,
+      sourceTrackCount: sourceTracks.length,
+      processedTrackCount,
+      transferredCount,
+      failedCount: failures.length,
+      failedTracks: failures,
+      failures,
+      targetPlaylistId,
+      targetPlaylistUrl: cancelledTargetPlaylistUrl,
+      transferDurationMs: cancelledDurationMs,
+      completedAt: cancelledCompletedAt,
+      overallStatus: "cancelled",
+      cancelled: true,
+      truncated: true,
+    });
+    applySpotifySessionToResponse(response, request, sessionId, spotifyState);
+    upsertTransferProgress(transferId, {
+      status: "cancelled",
+      overallStatus: "cancelled",
+      processedTrackCount,
+      transferredCount,
+      failedCount: failures.length,
+      completedAt: cancelledCompletedAt,
+      transferDurationMs: cancelledDurationMs,
+      result: null,
+    });
+    clearTransferCancellation(transferId);
     return response;
   }
 
@@ -1308,5 +1397,6 @@ export async function POST(request: NextRequest) {
     overallStatus,
     result: payload,
   });
+  clearTransferCancellation(transferId);
   return response;
 }
