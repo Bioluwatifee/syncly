@@ -20,6 +20,7 @@ export interface Track {
   durationMs: number;
   imageUrl?: string;
   platformId?: string; // the ID on the source platform
+  isrc?: string; // International Standard Recording Code, when available (used as a last-resort search key)
 }
 
 export interface Playlist {

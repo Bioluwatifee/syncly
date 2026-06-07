@@ -3,9 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, getClientIp, isSameOriginMutation } from "@/lib/security";
 import { Track } from "@/types";
 import {
+  extractFeaturedArtist,
   normalizeArtist,
   normalizeTitle,
   similarity,
+  splitArtists,
+  stripForSearch,
 } from "@/lib/matcher";
 import {
   clearPlatformSession,
@@ -432,6 +435,7 @@ function mapSpotifyTrack(track: any): Track | null {
     album: String(track?.album?.name ?? ""),
     durationMs: Number.isFinite(Number(track?.duration_ms)) ? Math.trunc(Number(track.duration_ms)) : 0,
     imageUrl: track?.album?.images?.[0]?.url ? String(track.album.images[0].url) : undefined,
+    isrc: track?.external_ids?.isrc ? String(track.external_ids.isrc) : undefined,
   };
 }
 
@@ -454,53 +458,95 @@ function dedupeStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
-function stripSearchSuffixes(title: string): string {
-  return title
-    .replace(/\s*-\s*\d{4}\s*remaster(?:ed)?/gi, "")
-    .replace(/\s*-\s*remaster(?:ed)?\s*\d{4}?/gi, "")
-    .replace(/\s*-\s*remaster(?:ed)?/gi, "")
-    .replace(/\s*-\s*deluxe edition.*$/gi, "")
-    .replace(/\s*-\s*anniversary edition.*$/gi, "")
-    .replace(/\s*-\s*explicit.*$/gi, "")
-    .replace(/\s*-\s*live.*$/gi, "")
-    .replace(/\s*-\s*remix.*$/gi, "")
-    .replace(/\s*\((?:remaster(?:ed)?|deluxe edition|anniversary edition|explicit|live|remix|version)[^)]*\)/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+// Search-query strip helper — delegates to the shared normalizer in matcher.ts
+// so query building and score normalization use identical cleaning rules.
+const stripSearchSuffixes = stripForSearch;
 
+/**
+ * Builds an ordered fallback list of search queries, from most specific to
+ * most permissive:
+ *   1. Full title + full artist credit
+ *   2. Cleaned (noise-stripped) title + main artist only
+ *   3. Cleaned title alone
+ *   4. ISRC code (if Spotify provided one) — last resort, exact-recording lookup
+ * Plus a few relaxed-mode variants (featured-artist swap, raw title + main artist).
+ */
 function buildSearchQueries(track: Track, relaxed = false): string[] {
-  const primaryArtist = track.artist.split(",")[0]?.trim() ?? "";
-  const normalizedArtist = normalizeArtist(track.artist);
-  const strippedTitle = stripSearchSuffixes(track.name);
   const rawTitle = track.name.trim();
+  const strippedTitle = stripSearchSuffixes(track.name);
+  const fullArtist = track.artist.trim();
+  const mainArtist = normalizeArtist(track.artist) || (track.artist.split(",")[0]?.trim() ?? "");
+  const featuredArtist = extractFeaturedArtist(track.name);
+  const isrc = track.isrc?.trim();
 
   const queries = [
-    `${strippedTitle} ${primaryArtist}`.trim(),
-    `${strippedTitle} ${normalizedArtist}`.trim(),
+    // Try 1 — full title + full artist
+    `${rawTitle} ${fullArtist}`.trim(),
+    // Try 2 — cleaned title + main artist only
+    `${strippedTitle} ${mainArtist}`.trim(),
+    // Try 3 — cleaned title alone
     strippedTitle,
-    `${rawTitle} ${primaryArtist}`.trim(),
   ];
+
+  if (featuredArtist) {
+    queries.push(`${strippedTitle} ${featuredArtist}`.trim());
+    queries.push(`${strippedTitle} ${mainArtist} ${featuredArtist}`.trim());
+  }
 
   if (relaxed) {
     queries.push(rawTitle);
-    queries.push(`${rawTitle} ${normalizedArtist}`.trim());
-    if (primaryArtist) {
-      queries.push(`${strippedTitle} ${primaryArtist}`.trim());
+    queries.push(`${rawTitle} ${mainArtist}`.trim());
+    const allArtists = splitArtists(track.artist);
+    for (const artistName of allArtists.slice(1, 3)) {
+      queries.push(`${strippedTitle} ${artistName}`.trim());
     }
+  }
+
+  // Try 4 — ISRC (exact-recording identifier), last resort only
+  if (isrc) {
+    queries.push(isrc);
   }
 
   return dedupeStrings(queries);
 }
 
-function detectVersionTag(name: string): string | null {
+const VERSION_TAG_TERMS = ["live", "remix", "acoustic", "cover", "karaoke", "instrumental", "tribute"] as const;
+
+function detectVersionTag(name: string): (typeof VERSION_TAG_TERMS)[number] | null {
   const normalized = name.toLowerCase();
-  if (normalized.includes("live")) return "live";
-  if (normalized.includes("remix")) return "remix";
-  if (normalized.includes("acoustic")) return "acoustic";
-  if (normalized.includes("cover")) return "cover";
-  if (normalized.includes("remaster")) return "remaster";
+  for (const term of VERSION_TAG_TERMS) {
+    if (normalized.includes(term)) return term;
+  }
   return null;
+}
+
+/**
+ * Maps an internal/technical rejection reason to a short, human-readable
+ * explanation suitable for display to end users.
+ */
+function humanizeRejectionReason(reason: string | null | undefined): string {
+  if (!reason) return "Couldn't find a close enough match";
+  const normalized = reason.toLowerCase();
+
+  if (normalized.includes("no search results") || normalized.includes("not available")) {
+    return "Not available on YouTube Music";
+  }
+  if (normalized.includes("region")) {
+    return "Region restricted";
+  }
+  if (normalized.includes("filtered as") || normalized.includes("only live") || normalized.includes("only remix")) {
+    return "Only live or remix versions found";
+  }
+  if (normalized.includes("instrumental") || normalized.includes("alternate")) {
+    return "Instrumental or alternate version only";
+  }
+  if (normalized.includes("similarity") || normalized.includes("threshold") || normalized.includes("below")) {
+    return "Couldn't find a close enough match";
+  }
+  if (normalized.includes("artist mismatch") || normalized.includes("duration mismatch")) {
+    return "Couldn't find a close enough match";
+  }
+  return "Couldn't find a close enough match";
 }
 
 function scoreCandidate(sourceTrack: Track, candidate: Track, threshold: number): MatchCandidateDiagnostic {
@@ -511,25 +557,59 @@ function scoreCandidate(sourceTrack: Track, candidate: Track, threshold: number)
 
   const titleScore = similarity(sourceTitle, candidateTitle);
   const artistScore = similarity(sourceArtist, candidateArtist);
-  const combinedScore = titleScore * 0.62 + artistScore * 0.38;
-  const durationDeltaMs = Number.isFinite(sourceTrack.durationMs) && Number.isFinite(candidate.durationMs)
-    ? Math.abs(sourceTrack.durationMs - candidate.durationMs)
-    : null;
-  const durationStatus =
-    durationDeltaMs === null || candidate.durationMs <= 0
-      ? "unavailable"
-      : durationDeltaMs <= 20_000
-        ? "matched"
-        : "mismatch";
 
-  let rejectionReason: string | null = null;
+  // Title carries most of the weight — a song with the right title is more
+  // likely the correct track than one with the right artist but wrong title.
+  let combinedScore = titleScore * 0.75 + artistScore * 0.25;
+
+  const durationDeltaMs =
+    Number.isFinite(sourceTrack.durationMs) &&
+    Number.isFinite(candidate.durationMs) &&
+    candidate.durationMs > 0
+      ? Math.abs(sourceTrack.durationMs - candidate.durationMs)
+      : null;
+
+  // Duration: soft signal only.  Within 10 s = bonus; 10–60 s = minor penalty;
+  // beyond 60 s = larger penalty.  We never hard-reject on duration alone
+  // because YouTube Music duration metadata is often slightly off.
+  const durationStatus: MatchCandidateDiagnostic["durationStatus"] =
+    durationDeltaMs === null
+      ? "unavailable"
+      : durationDeltaMs <= 10_000
+        ? "matched"
+        : durationDeltaMs <= 60_000
+          ? "matched"
+          : "mismatch";
+
+  if (durationDeltaMs !== null) {
+    if (durationDeltaMs <= 10_000) combinedScore = Math.min(1, combinedScore + 0.05);
+    else if (durationDeltaMs <= 60_000) combinedScore = Math.max(0, combinedScore - 0.02);
+    else combinedScore = Math.max(0, combinedScore - 0.08);
+  }
+
   const sourceVersionTag = detectVersionTag(sourceTrack.name);
   const candidateVersionTag = detectVersionTag(candidate.name);
-  if (sourceVersionTag !== candidateVersionTag && candidateVersionTag && !sourceVersionTag) {
+
+  let rejectionReason: string | null = null;
+
+  // Only hard-reject karaoke / tribute — these are never good substitutes for
+  // the original.  Live, remix, acoustic etc. are only rejected when the
+  // *title score is low* (meaning it's not clearly the same song); if the
+  // title matches well we accept the version rather than returning nothing.
+  if (candidateVersionTag === "karaoke" || candidateVersionTag === "tribute") {
     rejectionReason = `Filtered as ${candidateVersionTag} version`;
-  } else if (durationStatus === "mismatch") {
-    rejectionReason = "Duration mismatch";
-  } else if (artistScore < 0.35) {
+  } else if (
+    candidateVersionTag &&
+    !sourceVersionTag &&
+    titleScore < 0.72 &&
+    (candidateVersionTag === "live" || candidateVersionTag === "remix")
+  ) {
+    rejectionReason = `Filtered as ${candidateVersionTag} version`;
+  } else if (candidateVersionTag === "instrumental" && !sourceVersionTag && titleScore < 0.72) {
+    rejectionReason = "Instrumental or alternate version only";
+  } else if (artistScore < 0.20) {
+    // Very low artist score — flag it but keep the score so the best-effort
+    // fallback below can still use this candidate if nothing better exists.
     rejectionReason = "Artist mismatch";
   } else if (combinedScore < threshold) {
     rejectionReason = "Similarity score below threshold";
@@ -566,7 +646,7 @@ async function findYouTubeMatchForSourceTrack({
   searchQuery: string;
   diagnostics: MatchDiagnostics;
 }> {
-  const threshold = matchMode === "relaxed" ? 0.65 : 0.75;
+  const threshold = matchMode === "relaxed" ? 0.38 : 0.45;
   const searchQueries = buildSearchQueries(sourceTrack, matchMode === "relaxed");
   const attempts: MatchDiagnostics["attempts"] = [];
   const allCandidates: MatchCandidateDiagnostic[] = [];
@@ -646,25 +726,99 @@ async function findYouTubeMatchForSourceTrack({
     }
   }
 
+  const sortedCandidates = [...allCandidates].sort((a, b) => b.combinedScore - a.combinedScore);
+
   if (!chosenMatch) {
-    const bestCandidate = [...allCandidates].sort((a, b) => b.combinedScore - a.combinedScore)[0] ?? null;
-    chosenConfidence = bestCandidate?.combinedScore ?? 0;
-    chosenCandidate = bestCandidate;
+    // Best-effort fallback: if a clean match wasn't found above the normal
+    // threshold, accept the highest-scoring candidate that:
+    //   - has a score above a very low floor (0.35)
+    //   - is NOT karaoke or tribute (unusable substitutes)
+    //   - has a title score of at least 0.55 (we need the right song, not just
+    //     an artist match with a different title)
+    // This catches cases where a live version, music video, or slightly
+    // mismatched artist metadata is the only copy on YouTube Music.
+    const BEST_EFFORT_FLOOR = 0.35;
+    const TITLE_FLOOR = 0.55;
+    const bestEffortCandidate = sortedCandidates.find(
+      (c) =>
+        c.combinedScore >= BEST_EFFORT_FLOOR &&
+        c.titleScore >= TITLE_FLOOR &&
+        c.rejectionReason !== "Filtered as karaoke version" &&
+        c.rejectionReason !== "Filtered as tribute version"
+    ) ?? null;
+
+    if (bestEffortCandidate) {
+      // Accept it — log that we used best-effort so the threshold can be tuned.
+      console.log("[matcher:best-effort-accept]", {
+        track: `${sourceTrack.name} — ${sourceTrack.artist}`,
+        accepted: `${bestEffortCandidate.name} — ${bestEffortCandidate.artist}`,
+        titleScore: bestEffortCandidate.titleScore.toFixed(3),
+        artistScore: bestEffortCandidate.artistScore.toFixed(3),
+        combinedScore: bestEffortCandidate.combinedScore.toFixed(3),
+        overriddenRejection: bestEffortCandidate.rejectionReason,
+      });
+      chosenCandidate = bestEffortCandidate;
+      chosenConfidence = bestEffortCandidate.combinedScore;
+      chosenMatch = {
+        id: bestEffortCandidate.id,
+        platformId: bestEffortCandidate.id,
+        name: bestEffortCandidate.name,
+        artist: bestEffortCandidate.artist,
+        album: bestEffortCandidate.album,
+        durationMs: bestEffortCandidate.durationMs,
+        imageUrl: undefined,
+      };
+    } else {
+      chosenConfidence = sortedCandidates[0]?.combinedScore ?? 0;
+      chosenCandidate = sortedCandidates[0] ?? null;
+    }
+  }
+
+  const noResultsOnAllAttempts =
+    attempts.length > 0 &&
+    attempts.every((a) => a.rejectionReason === "No search results returned.");
+
+  const technicalRejectionReason: string = chosenMatch
+    ? "Matched candidate selected."
+    : attempts.length === 0
+      ? "No search queries were generated."
+      : noResultsOnAllAttempts
+        ? "No search results returned."
+        : chosenCandidate?.rejectionReason ?? "No candidate met the threshold.";
+
+  const userFacingRejectionReason = chosenMatch
+    ? "Matched candidate selected."
+    : humanizeRejectionReason(technicalRejectionReason);
+
+  // Always log scores for failed tracks — actionable in Vercel logs.
+  if (!chosenMatch) {
+    console.log("[matcher:failed]", {
+      track: `${sourceTrack.name} — ${sourceTrack.artist}`,
+      isrc: sourceTrack.isrc ?? null,
+      mode: matchMode,
+      threshold,
+      queriesAttempted: searchQueries,
+      fallbackStrategiesUsed: attempts.length,
+      technicalRejection: technicalRejectionReason,
+      userFacingReason: userFacingRejectionReason,
+      top3Results: sortedCandidates.slice(0, 3).map((c) => ({
+        youtubeTitle: c.name,
+        youtubeArtist: c.artist,
+        titleScore: c.titleScore.toFixed(3),
+        artistScore: c.artistScore.toFixed(3),
+        combinedScore: c.combinedScore.toFixed(3),
+        rejection: c.rejectionReason,
+      })),
+    });
   }
 
   const diagnostics: MatchDiagnostics = {
     searchQueries,
     threshold,
     attempts,
-    topCandidates: [...allCandidates].sort((a, b) => b.combinedScore - a.combinedScore).slice(0, 5),
+    topCandidates: sortedCandidates.slice(0, 5),
     selectedCandidate: chosenCandidate,
-    rejectionReason: chosenMatch
-      ? "Matched candidate selected."
-      : attempts.length === 0
-        ? "No search queries were generated."
-        : attempts.every((attempt) => attempt.rejectionReason === "No search results returned.")
-          ? "No search results returned."
-          : chosenCandidate?.rejectionReason ?? "No candidate met the threshold.",
+    rejectionReason: userFacingRejectionReason,
   };
 
   return {
@@ -1166,7 +1320,7 @@ export async function POST(request: NextRequest) {
         if (!matchResult.match?.id) {
           failures.push({
             sourceTrack,
-            reason: matchResult.diagnostics.rejectionReason || "No sufficiently close YouTube match found.",
+            reason: matchResult.diagnostics.rejectionReason || "Couldn't find a close enough match",
             searchQuery: matchResult.searchQuery,
             searchQueries: matchResult.diagnostics.searchQueries,
             threshold: matchResult.diagnostics.threshold,
@@ -1181,7 +1335,7 @@ export async function POST(request: NextRequest) {
             batchProcessedCount: trackIndexInBatch + 1,
             trackResults: markTrackResult(sourceTrack.id, {
               status: "failed",
-              failureReason: matchResult.diagnostics.rejectionReason || "No sufficiently close YouTube match found.",
+              failureReason: matchResult.diagnostics.rejectionReason || "Couldn't find a close enough match",
             }),
           });
           await sleep(TRANSFER_STEP_DELAY_MS);

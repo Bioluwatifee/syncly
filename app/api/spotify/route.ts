@@ -198,6 +198,7 @@ async function getSpotifyPlaylistTracks(accessToken: string, playlistId: string)
     album: string;
     durationMs: number;
     imageUrl?: string;
+    isrc?: string;
   }> = [];
 
   const pageSize = 100;
@@ -250,6 +251,7 @@ async function getSpotifyPlaylistTracks(accessToken: string, playlistId: string)
         album: String(track?.album?.name ?? ""),
         durationMs: Number.isFinite(Number(track?.duration_ms)) ? Math.trunc(Number(track.duration_ms)) : 0,
         imageUrl: track?.album?.images?.[0]?.url ? String(track.album.images[0].url) : undefined,
+        isrc: track?.external_ids?.isrc ? String(track.external_ids.isrc) : undefined,
       });
     }
 

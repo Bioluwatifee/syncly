@@ -399,23 +399,78 @@ function SuccessState({
   isMobile,
   playlist,
   total,
-  targetPlaylistId,
+  transferDurationMs,
+  completedAt,
+  trackResults,
   onStartAnother,
-}: { isMobile: boolean; playlist: PlaylistItem; total: number; targetPlaylistId: string | null; onStartAnother: () => void }) {
+}: {
+  isMobile: boolean;
+  playlist: PlaylistItem;
+  total: number;
+  transferDurationMs: number;
+  completedAt: string | null;
+  trackResults: TrackResult[];
+  onStartAnother: () => void;
+}) {
+  const completionLabel = formatCompletedAt(completedAt);
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 16 : 24, fontWeight: 400, color: "rgba(255,255,255,0.9)", marginBottom: 16, letterSpacing: "0.1px" }}>
-        Transferring playlist…
+        Transfer result
       </h2>
-      <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "32px 20px" : "48px 32px", textAlign: "center" }}>
-        <div style={{ fontSize: isMobile ? 17 : 20, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Playlist successfully transferred</div>
-        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 24 }}>
-          {playlist.name} by {playlist.owner}
+      <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
+        <div style={{ textAlign: "center", marginBottom: 4 }}>
+          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>All {total} songs transferred</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>Every song was found and added to your new playlist</div>
+          <div style={{ marginBottom: 4 }}><PlatformRow /></div>
         </div>
-        <div style={{ marginBottom: 28 }}><PlatformRow /></div>
-        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center" }}>
+        <div style={{ margin: "20px 0" }}>
+          <PlaylistCard playlist={playlist} />
+        </div>
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }} />
+        <div style={{ display: "grid", gap: 10, margin: "20px 0", textAlign: "left" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Source tracks</span><strong style={{ color: "#fff" }}>{total}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Transferred</span><strong style={{ color: "#1ed760" }}>{total}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Duration</span><strong style={{ color: "#fff" }}>{formatDurationMs(transferDurationMs)}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+            <span>Time</span><strong style={{ color: "#fff" }}>{completionLabel ?? "—"}</strong>
+          </div>
+        </div>
+        {trackResults.length > 0 && (
+          <>
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", marginBottom: 4 }} />
+            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+              <div style={{ marginBottom: 20 }}>
+                {trackResults.map((t, i) => (
+                  <div key={t.id} style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    padding: isMobile ? "14px 0" : "13px 4px",
+                    borderBottom: i < trackResults.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
+                  }}>
+                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", width: 18, textAlign: "right", flexShrink: 0 }}>{i + 1}.</span>
+                    <div style={{ width: 40, height: 40, borderRadius: 7, overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,0.08)" }}>
+                      {t.imageUrl && <img src={t.imageUrl} alt={t.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: "#fff", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{t.artist}</div>
+                    </div>
+                    <CheckIcon />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center", marginTop: trackResults.length > 0 ? 16 : 0 }}>
           <button style={{ ...btnYellow, ...(isMobile ? {} : { maxWidth: 280 }) }} onClick={onStartAnother}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(232,197,71,0.18)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
         </div>
@@ -447,6 +502,7 @@ function formatCompletedAt(completedAt: string | null): string | null {
 
 // ─── State: Partial Match ─────────────────────────────────────────────────────
 function PartialState({
+  playlist,
   failedTracks,
   isMobile,
   sourceTrackCount,
@@ -457,6 +513,7 @@ function PartialState({
   onRetry,
   onStartAnother,
 }: {
+  playlist: PlaylistItem;
   failedTracks: TrackResult[];
   isMobile: boolean;
   sourceTrackCount: number;
@@ -480,7 +537,11 @@ function PartialState({
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>{failed} {failed === 1 ? "song" : "songs"} could not be found</div>
           <div style={{ marginBottom: 4 }}><PlatformRow /></div>
         </div>
-        <div style={{ display: "grid", gap: 10, margin: "18px 0 20px", textAlign: "left" }}>
+        <div style={{ margin: "20px 0" }}>
+          <PlaylistCard playlist={playlist} />
+        </div>
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }} />
+        <div style={{ display: "grid", gap: 10, margin: "20px 0 20px", textAlign: "left" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
             <span>Source tracks</span><strong style={{ color: "#fff" }}>{sourceTrackCount}</strong>
           </div>
@@ -497,10 +558,11 @@ function PartialState({
             <span>Time</span><strong style={{ color: "#fff" }}>{completionLabel ?? "—"}</strong>
           </div>
         </div>
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", marginBottom: 4 }} />
         <div style={{ maxHeight: 320, overflowY: "auto" }}>
           <FailedTrackList tracks={failedTracks} isMobile={isMobile} showReasons />
         </div>
-        <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "flex-start", margin: "8px 0 16px" }}>
           <CopyFailedButton tracks={failedTracks} />
         </div>
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12 }}>
@@ -509,7 +571,7 @@ function PartialState({
             onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
           >Retry failed songs ({failed})</button>
           <button style={btnYellow} onClick={onStartAnother}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(232,197,71,0.18)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
         </div>
@@ -559,7 +621,7 @@ function PostRetryFailureState({
         </div>
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center" }}>
           <button style={{ ...btnYellow, ...(isMobile ? {} : { maxWidth: 280 }) }} onClick={onStartAnother}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(232,197,71,0.18)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
         </div>
@@ -634,7 +696,7 @@ function ErrorState({
             onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
           >Try again</button>
           <button style={btnYellow} onClick={onStartAnother}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(232,197,71,0.3)"; }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(232,197,71,0.18)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
           >Start another transfer</button>
         </div>
@@ -2197,13 +2259,16 @@ export default function TransferPage() {
               isMobile={isMobile}
               playlist={activeTransferPlaylist}
               total={transferTotal}
-              targetPlaylistId={transferTargetPlaylistId}
+              transferDurationMs={transferDurationMs}
+              completedAt={transferCompletedAt}
+              trackResults={(transferProgress?.trackResults ?? []) as TrackResult[]}
               onStartAnother={resetTransferSession}
             />
           )}
 
           {transferView === "partial" && activeTransferPlaylist && (
             <PartialState
+              playlist={activeTransferPlaylist}
               failedTracks={failedTracks}
               isMobile={isMobile}
               sourceTrackCount={transferTotal}
