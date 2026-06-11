@@ -19,7 +19,7 @@ import {
 import { clearTransferProgress, clearTransferCancellation, isTransferCancellationRequested, upsertTransferProgress, type TrackResultSnapshot } from "@/lib/transfer-progress";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 type SupportedPlatform = "spotify" | "youtube";
 
@@ -33,8 +33,9 @@ type SpotifySessionState = {
 const TRANSFER_RATE_LIMIT = { limit: 20, windowMs: 60_000 };
 const SEARCH_LIMIT = 8;
 const MATCH_LIMIT = 250;
-const TRANSFER_BATCH_SIZE = 10;
-const TRANSFER_STEP_DELAY_MS = 150;
+const TRANSFER_STEP_DELAY_MS = 300;           // delay between each track — fast but avoids mass 429s
+const RATE_LIMIT_RETRY_DELAY_MS = 3_000;      // pause on 429, retry once, then move on
+const ECONNRESET_MAX_RETRIES = 3;             // retries on connection-level errors (ECONNRESET, hang-up)
 const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
 const SPOTIFY_PROACTIVE_REFRESH_WINDOW_MS = 5 * 60_000;
 const SPOTIFY_REQUEST_TIMEOUT_MS = 10_000;
@@ -127,6 +128,98 @@ function chunkArray<T>(items: T[], chunkSize: number): T[][] {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * fetch() wrapper that:
+ *  - Retries up to ECONNRESET_MAX_RETRIES times on connection-level errors
+ *    (ECONNRESET, socket hang-up, FetchError, etc.) with a short linear back-off.
+ *  - On HTTP 429 retries once after RATE_LIMIT_RETRY_DELAY_MS, then returns the
+ *    429 response so callers can record the failure without crashing the transfer.
+ */
+async function fetchWithRetry(
+  url: URL | string,
+  init: RequestInit,
+  maxRetries = ECONNRESET_MAX_RETRIES
+): Promise<Response> {
+  let lastError: unknown;
+  // 429 is retried exactly once — separate from the connection-error budget so a
+  // rate-limit hit doesn't burn one of the three ECONNRESET retry slots.
+  let rateLimitRetried = false;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.status === 429 && !rateLimitRetried) {
+        rateLimitRetried = true;
+        console.warn("[transfer] 429 — waiting 3 s then retrying once");
+        await sleep(RATE_LIMIT_RETRY_DELAY_MS);
+        attempt -= 1; // don't charge this against the connection-error budget
+        continue;
+      }
+      return res;
+    } catch (err) {
+      lastError = err;
+      const isConnectionError =
+        err instanceof Error &&
+        (err.message.includes("ECONNRESET") ||
+          err.message.includes("ECONNREFUSED") ||
+          err.message.includes("socket hang up") ||
+          err.message.includes("network") ||
+          (err as NodeJS.ErrnoException).code === "ECONNRESET");
+      if (isConnectionError && attempt < maxRetries) {
+        const delay = 500 * (attempt + 1);
+        console.warn("[transfer] connection error — retrying", {
+          attempt: attempt + 1,
+          delay,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        await sleep(delay);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Reads `Set-Cookie` headers from an internal `/api/youtube` response and merges
+ * any updated YouTube token cookies back into the cookie string we send for
+ * subsequent YouTube calls.  This propagates token refreshes that the YouTube
+ * route performs internally so we don't keep re-using an expired access token.
+ */
+function mergeRefreshedYoutubeCookies(cookieHeader: string, response: Response): string {
+  let setCookies: string[] = [];
+  if (typeof (response.headers as any).getSetCookie === "function") {
+    setCookies = (response.headers as any).getSetCookie() as string[];
+  } else {
+    const single = response.headers.get("set-cookie");
+    if (single) setCookies = [single];
+  }
+  if (setCookies.length === 0) return cookieHeader;
+
+  // Parse current cookie string into a mutable map
+  const map: Record<string, string> = {};
+  for (const part of cookieHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 1) continue;
+    map[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+  }
+
+  // Override with values from Set-Cookie response headers
+  for (const sc of setCookies) {
+    const nameValue = sc.split(";")[0] ?? "";
+    const eq = nameValue.indexOf("=");
+    if (eq < 1) continue;
+    const name = nameValue.slice(0, eq).trim();
+    const value = nameValue.slice(eq + 1).trim();
+    if (name) map[name] = value;
+  }
+
+  return Object.entries(map)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
 }
 
 function getCanonicalAppOrigin(): string {
@@ -607,11 +700,15 @@ function scoreCandidate(sourceTrack: Track, candidate: Track, threshold: number)
     rejectionReason = `Filtered as ${candidateVersionTag} version`;
   } else if (candidateVersionTag === "instrumental" && !sourceVersionTag && titleScore < 0.72) {
     rejectionReason = "Instrumental or alternate version only";
-  } else if (artistScore < 0.20) {
-    // Very low artist score — flag it but keep the score so the best-effort
-    // fallback below can still use this candidate if nothing better exists.
+  } else if (artistScore < 0.20 && titleScore < 0.80) {
+    // Low artist score only matters when the title match is also weak.
+    // If the title is a strong match (≥ 0.80) we accept regardless of artist
+    // formatting differences — this is common with Nigerian/Afrobeats artists
+    // where YouTube Music credits differ significantly from Spotify metadata.
     rejectionReason = "Artist mismatch";
-  } else if (combinedScore < threshold) {
+  } else if (combinedScore < threshold && titleScore < 0.80) {
+    // If the title is a strong match on its own, don't reject on combined score —
+    // a weak artist score drags combined down but the song is clearly correct.
     rejectionReason = "Similarity score below threshold";
   }
 
@@ -657,11 +754,9 @@ async function findYouTubeMatchForSourceTrack({
 
   for (const searchQuery of searchQueries) {
     const searchUrl = new URL(`/api/youtube?resource=search&query=${encodeURIComponent(searchQuery)}&limit=${SEARCH_LIMIT}`, appOrigin);
-    const searchResponse = await fetch(searchUrl, {
+    const searchResponse = await fetchWithRetry(searchUrl, {
       method: "GET",
-      headers: {
-        cookie: cookieHeader,
-      },
+      headers: { cookie: cookieHeader },
       cache: "no-store",
     });
 
@@ -1127,13 +1222,42 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  // ── Set up track lists and seed the live UI before any YouTube calls ────────
+  // Moving this BEFORE playlist creation means the track list is visible in the
+  // UI immediately, even if there is a delay or error creating the playlist.
+  const tracksToProcess = clampTracksForMatching(sourceTracks);
+  const failures: FailureItem[] = [];
+  let transferredCount = 0;
+  let processedTrackCount = 0;
+  // `let` — may be updated with refreshed YouTube tokens after each internal call
+  let cookieHeader = request.headers.get("cookie") ?? "";
+
+  // Live per-track results — seeded as "pending" so the UI renders the full list
+  // immediately, then flipped to "success"/"failed" as each track resolves.
+  const trackResultsSnapshot: TrackResultSnapshot[] = tracksToProcess.map((track) => ({
+    id: track.id,
+    name: track.name,
+    artist: track.artist,
+    imageUrl: track.imageUrl,
+    status: "pending",
+  }));
+  function markTrackResult(trackId: string, patch: Partial<TrackResultSnapshot>): TrackResultSnapshot[] {
+    const idx = trackResultsSnapshot.findIndex((entry) => entry.id === trackId);
+    if (idx >= 0) {
+      trackResultsSnapshot[idx] = { ...trackResultsSnapshot[idx], ...patch };
+    }
+    return [...trackResultsSnapshot];
+  }
+
+  // Seed the progress store with the full track list so the UI shows immediately
   upsertTransferProgress(transferId, {
     status: "running",
     playlistName,
-    sourceTrackCount: sourceTracks.length,
+    sourceTrackCount: tracksToProcess.length,
     processedTrackCount: 0,
     transferredCount: 0,
     failedCount: 0,
+    trackResults: [...trackResultsSnapshot],
   });
 
   if (sourceTracks.length === 0) {
@@ -1166,6 +1290,7 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
+  // ── Create destination YouTube playlist ──────────────────────────────────────
   let targetPlaylistId = requestedTargetPlaylistId;
   if (!targetPlaylistId) {
     const createPlaylistResponse = await fetch(
@@ -1174,7 +1299,7 @@ export async function POST(request: NextRequest) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          cookie: request.headers.get("cookie") ?? "",
+          cookie: cookieHeader,
         },
         body: JSON.stringify({
           title: playlistName,
@@ -1184,6 +1309,10 @@ export async function POST(request: NextRequest) {
       }
     );
 
+    // Propagate any refreshed YouTube tokens back into cookieHeader so all
+    // subsequent search and add calls use the up-to-date access token.
+    cookieHeader = mergeRefreshedYoutubeCookies(cookieHeader, createPlaylistResponse);
+
     const createPlaylistPayload = await createPlaylistResponse.json().catch(() => null);
     if (!createPlaylistResponse.ok || !createPlaylistPayload?.playlistId) {
       console.error("[transfer] destination playlist creation failed", {
@@ -1191,13 +1320,20 @@ export async function POST(request: NextRequest) {
         status: createPlaylistResponse.status,
         error: createPlaylistPayload?.error ?? "Unknown create playlist error",
       });
-      const response = NextResponse.json(
-        { error: createPlaylistPayload?.error ?? "Unable to create destination YouTube playlist." },
-        { status: createPlaylistResponse.status || 502 }
-      );
+
+      // Surface YouTube auth errors clearly so the client shows the right message
+      const isYouTubeAuthError = createPlaylistResponse.status === 401 || createPlaylistResponse.status === 403;
+      const errorMessage = isYouTubeAuthError
+        ? "YouTube Music session expired. Please reconnect YouTube Music."
+        : (createPlaylistPayload?.error ?? "Unable to create destination YouTube playlist.");
+      const errorStatus = isYouTubeAuthError ? 401 : (createPlaylistResponse.status || 502);
+
+      upsertTransferProgress(transferId, { status: "error", error: errorMessage });
+      const response = NextResponse.json({ error: errorMessage }, { status: errorStatus });
       applySpotifySessionToResponse(response, request, sessionId, spotifyState);
       console.error("[transfer] failed during destination playlist creation", {
         elapsedMs: Date.now() - routeStartedAt,
+        isYouTubeAuthError,
       });
       return response;
     }
@@ -1216,38 +1352,14 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const tracksToProcess = clampTracksForMatching(sourceTracks);
-  const failures: FailureItem[] = [];
-  let transferredCount = 0;
-  let processedTrackCount = 0;
-  const trackBatches = chunkArray(tracksToProcess, TRANSFER_BATCH_SIZE);
-  const totalBatches = trackBatches.length;
-  const cookieHeader = request.headers.get("cookie") ?? "";
-
-  // Live per-track results — seeded as "pending" so the UI can render the full
-  // list immediately, then flipped to "success"/"failed" as each track resolves.
-  const trackResultsSnapshot: TrackResultSnapshot[] = tracksToProcess.map((track) => ({
-    id: track.id,
-    name: track.name,
-    artist: track.artist,
-    imageUrl: track.imageUrl,
-    status: "pending",
-  }));
-  function markTrackResult(trackId: string, patch: Partial<TrackResultSnapshot>): TrackResultSnapshot[] {
-    const idx = trackResultsSnapshot.findIndex((entry) => entry.id === trackId);
-    if (idx >= 0) {
-      trackResultsSnapshot[idx] = { ...trackResultsSnapshot[idx], ...patch };
-    }
-    return [...trackResultsSnapshot];
-  }
-
+  // Update progress with the now-known target playlist URL
   upsertTransferProgress(transferId, {
     status: "running",
     sourceTrackCount: tracksToProcess.length,
     processedTrackCount: 0,
     transferredCount: 0,
     failedCount: 0,
-    totalBatches,
+    totalBatches: tracksToProcess.length,
     batchIndex: 0,
     batchProcessedCount: 0,
     batchSize: 0,
@@ -1259,68 +1371,77 @@ export async function POST(request: NextRequest) {
   let cancelledByUser = false;
 
   try {
-    batchLoop:
-    for (const [batchIndex, batch] of trackBatches.entries()) {
+    for (const sourceTrack of tracksToProcess) {
       if (isTransferCancellationRequested(transferId)) {
         cancelledByUser = true;
         break;
       }
 
-      console.log("[transfer] processing batch", {
-        elapsedMs: Date.now() - routeStartedAt,
-        batchIndex: batchIndex + 1,
-        totalBatches,
-        batchSize: batch.length,
-      });
-
       upsertTransferProgress(transferId, {
-        batchIndex: batchIndex + 1,
-        totalBatches,
-        batchSize: batch.length,
-        batchProcessedCount: 0,
+        currentTrackName: sourceTrack.name,
+        currentTrackArtist: sourceTrack.artist,
+        currentTrackIndex: processedTrackCount + 1,
+        currentTrackTotal: tracksToProcess.length,
       });
 
-      for (const [trackIndexInBatch, sourceTrack] of batch.entries()) {
-        if (isTransferCancellationRequested(transferId)) {
-          cancelledByUser = true;
-          break batchLoop;
-        }
+      // ── Search ──────────────────────────────────────────────────────────────
+      const matchResult = await findYouTubeMatchForSourceTrack({
+        sourceTrack,
+        appOrigin,
+        cookieHeader,
+        matchMode,
+      });
 
-        upsertTransferProgress(transferId, {
-          currentTrackName: sourceTrack.name,
-          currentTrackArtist: sourceTrack.artist,
-          currentTrackIndex: processedTrackCount + 1,
-          currentTrackTotal: tracksToProcess.length,
-        });
+      console.log("[transfer] track matching diagnostics", {
+        transferId,
+        sourceTrack: { id: sourceTrack.id, name: sourceTrack.name, artist: sourceTrack.artist, durationMs: sourceTrack.durationMs },
+        searchQueries: matchResult.diagnostics.searchQueries,
+        threshold: matchResult.diagnostics.threshold,
+        rejectionReason: matchResult.diagnostics.rejectionReason,
+        selectedCandidate: matchResult.diagnostics.selectedCandidate,
+      });
 
-        const matchResult = await findYouTubeMatchForSourceTrack({
+      if (!matchResult.match?.id) {
+        failures.push({
           sourceTrack,
-          appOrigin,
-          cookieHeader,
-          matchMode,
-        });
-
-        console.log("[transfer] track matching diagnostics", {
-          transferId,
-          sourceTrack: {
-            id: sourceTrack.id,
-            name: sourceTrack.name,
-            artist: sourceTrack.artist,
-            album: sourceTrack.album,
-            durationMs: sourceTrack.durationMs,
-          },
+          reason: matchResult.diagnostics.rejectionReason || "Couldn't find a close enough match",
+          searchQuery: matchResult.searchQuery,
           searchQueries: matchResult.diagnostics.searchQueries,
           threshold: matchResult.diagnostics.threshold,
-          rejectionReason: matchResult.diagnostics.rejectionReason,
-          topCandidates: matchResult.diagnostics.topCandidates,
-          selectedCandidate: matchResult.diagnostics.selectedCandidate,
-          attempts: matchResult.diagnostics.attempts,
+          diagnostics: matchResult.diagnostics,
+          retryEligible: matchMode === "normal",
         });
+        processedTrackCount += 1;
+        upsertTransferProgress(transferId, {
+          processedTrackCount,
+          transferredCount,
+          failedCount: failures.length,
+          trackResults: markTrackResult(sourceTrack.id, {
+            status: "failed",
+            failureReason: matchResult.diagnostics.rejectionReason || "Couldn't find a close enough match",
+          }),
+        });
+        await sleep(TRANSFER_STEP_DELAY_MS);
+        continue;
+      }
 
-        if (!matchResult.match?.id) {
+      // ── Add to playlist ─────────────────────────────────────────────────────
+      try {
+        const addResponse = await fetchWithRetry(
+          new URL(`/api/youtube?resource=addPlaylistItem`, appOrigin),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", cookie: cookieHeader },
+            body: JSON.stringify({ playlistId: targetPlaylistId, videoId: matchResult.match.id }),
+            cache: "no-store",
+          }
+        );
+
+        const addPayload = await addResponse.json().catch(() => null);
+        if (!addResponse.ok) {
           failures.push({
             sourceTrack,
-            reason: matchResult.diagnostics.rejectionReason || "Couldn't find a close enough match",
+            reason: addPayload?.error ?? "Failed to add matched track to YouTube playlist.",
             searchQuery: matchResult.searchQuery,
             searchQueries: matchResult.diagnostics.searchQueries,
             threshold: matchResult.diagnostics.threshold,
@@ -1332,93 +1453,50 @@ export async function POST(request: NextRequest) {
             processedTrackCount,
             transferredCount,
             failedCount: failures.length,
-            batchProcessedCount: trackIndexInBatch + 1,
             trackResults: markTrackResult(sourceTrack.id, {
               status: "failed",
-              failureReason: matchResult.diagnostics.rejectionReason || "Couldn't find a close enough match",
+              failureReason: addPayload?.error ?? "Failed to add matched track to YouTube playlist.",
             }),
           });
           await sleep(TRANSFER_STEP_DELAY_MS);
           continue;
         }
 
-        try {
-          const addResponse = await fetch(
-            new URL(`/api/youtube?resource=addPlaylistItem`, appOrigin),
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                cookie: cookieHeader,
-              },
-              body: JSON.stringify({
-                playlistId: targetPlaylistId,
-                videoId: matchResult.match.id,
-              }),
-              cache: "no-store",
-            }
-          );
-
-          const addPayload = await addResponse.json().catch(() => null);
-          if (!addResponse.ok) {
-            failures.push({
-              sourceTrack,
-              reason: addPayload?.error ?? "Failed to add matched track to YouTube playlist.",
-              searchQuery: matchResult.searchQuery,
-              searchQueries: matchResult.diagnostics.searchQueries,
-              threshold: matchResult.diagnostics.threshold,
-              diagnostics: matchResult.diagnostics,
-              retryEligible: matchMode === "normal",
-            });
-            processedTrackCount += 1;
-            upsertTransferProgress(transferId, {
-              processedTrackCount,
-              transferredCount,
-              failedCount: failures.length,
-              batchProcessedCount: trackIndexInBatch + 1,
-              trackResults: markTrackResult(sourceTrack.id, {
-                status: "failed",
-                failureReason: addPayload?.error ?? "Failed to add matched track to YouTube playlist.",
-              }),
-            });
-            await sleep(TRANSFER_STEP_DELAY_MS);
-            continue;
-          }
-
-          transferredCount += 1;
-          processedTrackCount += 1;
-          upsertTransferProgress(transferId, {
-            processedTrackCount,
-            transferredCount,
-            failedCount: failures.length,
-            batchProcessedCount: trackIndexInBatch + 1,
-            trackResults: markTrackResult(sourceTrack.id, { status: "success" }),
-          });
-        } catch {
-          failures.push({
-            sourceTrack,
-            reason: "Failed to add matched track to YouTube playlist.",
-            searchQuery: matchResult.searchQuery,
-            searchQueries: matchResult.diagnostics.searchQueries,
-            threshold: matchResult.diagnostics.threshold,
-            diagnostics: matchResult.diagnostics,
-            retryEligible: matchMode === "normal",
-          });
-          processedTrackCount += 1;
-          upsertTransferProgress(transferId, {
-            processedTrackCount,
-            transferredCount,
-            failedCount: failures.length,
-            batchProcessedCount: trackIndexInBatch + 1,
-            trackResults: markTrackResult(sourceTrack.id, {
-              status: "failed",
-              failureReason: "Failed to add matched track to YouTube playlist.",
-            }),
-          });
-        }
-
-        await sleep(TRANSFER_STEP_DELAY_MS);
+        transferredCount += 1;
+        processedTrackCount += 1;
+        upsertTransferProgress(transferId, {
+          processedTrackCount,
+          transferredCount,
+          failedCount: failures.length,
+          trackResults: markTrackResult(sourceTrack.id, { status: "success" }),
+        });
+      } catch (addError) {
+        console.error("[transfer] add error for track", {
+          trackName: sourceTrack.name,
+          error: addError instanceof Error ? addError.message : String(addError),
+        });
+        failures.push({
+          sourceTrack,
+          reason: "Failed to add track — connection error.",
+          searchQuery: matchResult.searchQuery,
+          searchQueries: matchResult.diagnostics.searchQueries,
+          threshold: matchResult.diagnostics.threshold,
+          diagnostics: matchResult.diagnostics,
+          retryEligible: matchMode === "normal",
+        });
+        processedTrackCount += 1;
+        upsertTransferProgress(transferId, {
+          processedTrackCount,
+          transferredCount,
+          failedCount: failures.length,
+          trackResults: markTrackResult(sourceTrack.id, {
+            status: "failed",
+            failureReason: "Failed to add track — connection error.",
+          }),
+        });
       }
+
+      await sleep(TRANSFER_STEP_DELAY_MS);
     }
   } catch (loopError) {
     console.error("[transfer] transfer loop crashed", loopError);

@@ -112,6 +112,7 @@ interface TransferProgress {
   error?: string;
   overallStatus?: "success" | "partial" | "failure";
   result?: any;
+  statusMessage?: string;
   updatedAt: number;
 }
 
@@ -351,9 +352,22 @@ function TransferringState({
 
   return (
     <>
-      <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 16 : 24, fontWeight: 400, color: "rgba(255,255,255,0.9)", marginBottom: 16, letterSpacing: "0.1px" }}>
-        {isRetry ? `Retrying ${total} failed tracks` : "Transferring playlist…"}
-      </h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 16 : 24, fontWeight: 400, color: "rgba(255,255,255,0.9)", margin: 0, letterSpacing: "0.1px" }}>
+          {isRetry ? `Retrying ${total} failed tracks` : "Transferring playlist…"}
+        </h2>
+        {progress?.statusMessage && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+              <circle cx="8" cy="8" r="7" stroke="#e8c547" strokeWidth="1.5"/>
+              <path d="M8 5v4M8 11v.5" stroke="#e8c547" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            <span style={{ fontSize: 13, color: "rgba(232,197,71,0.9)", fontFamily: "'DM Sans', sans-serif" }}>
+              {progress.statusMessage}
+            </span>
+          </div>
+        )}
+      </div>
       <PlaylistCard playlist={playlist} retryCount={isRetry ? total : undefined} />
       <ProgressBar done={done} total={trackTotal} label={`${done} out of ${trackTotal} in progress`} />
       <div style={{ marginTop: 4, maxHeight: TRANSFERRING_LIST_MAX_HEIGHT, overflowY: "auto" }}>

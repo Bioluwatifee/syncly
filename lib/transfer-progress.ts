@@ -34,6 +34,7 @@ export type TransferProgressSnapshot = {
   overallStatus?: "success" | "partial" | "failure" | "cancelled";
   result?: unknown;
   cancelRequested?: boolean;
+  statusMessage?: string;
   updatedAt: number;
 };
 
