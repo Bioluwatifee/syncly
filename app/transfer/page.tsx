@@ -2248,7 +2248,7 @@ export default function TransferPage() {
                     cursor: !transferDisabledReason && !isPreparingTransfer ? "pointer" : "not-allowed",
                     transition: "transform 0.15s, box-shadow 0.15s",
                   }}
-                  onMouseEnter={e => { if (!transferDisabledReason) { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 40px rgba(232,197,71,0.3)"; } }}
+                  onMouseEnter={e => { if (!transferDisabledReason) { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(232,197,71,0.18)"; } }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
                   onClick={handleTransferClick}
                 >

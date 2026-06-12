@@ -617,10 +617,34 @@ function detectVersionTag(name: string): (typeof VERSION_TAG_TERMS)[number] | nu
  * Maps an internal/technical rejection reason to a short, human-readable
  * explanation suitable for display to end users.
  */
+/**
+ * Sanitizes technical/auth errors into a friendly message for the add-to-playlist
+ * failure path.  Anything mentioning sessions, reconnecting, or auth becomes a
+ * generic "connection interrupted" message.
+ */
+function humanizeAddFailureReason(reason: string | null | undefined): string {
+  const fallback = "Connection interrupted, please try again";
+  if (!reason) return "Failed to add matched track to YouTube playlist.";
+  const normalized = reason.toLowerCase();
+  if (
+    normalized.includes("session expired") ||
+    normalized.includes("reconnect") ||
+    normalized.includes("not connected") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("connection error")
+  ) {
+    return fallback;
+  }
+  return reason;
+}
+
 function humanizeRejectionReason(reason: string | null | undefined): string {
   if (!reason) return "Couldn't find a close enough match";
   const normalized = reason.toLowerCase();
 
+  if (normalized.includes("session expired") || normalized.includes("reconnect") || normalized.includes("not connected")) {
+    return "Connection interrupted, please try again";
+  }
   if (normalized.includes("no search results") || normalized.includes("not available")) {
     return "Not available on YouTube Music";
   }
@@ -742,6 +766,8 @@ async function findYouTubeMatchForSourceTrack({
   confidence: number;
   searchQuery: string;
   diagnostics: MatchDiagnostics;
+  /** true when no match was found AND at least one search query was 429-throttled */
+  rateLimited: boolean;
 }> {
   const threshold = matchMode === "relaxed" ? 0.38 : 0.45;
   const searchQueries = buildSearchQueries(sourceTrack, matchMode === "relaxed");
@@ -751,6 +777,7 @@ async function findYouTubeMatchForSourceTrack({
   let chosenConfidence = 0;
   let chosenSearchQuery = searchQueries[0] ?? `${sourceTrack.name} ${sourceTrack.artist}`.trim();
   let chosenCandidate: MatchCandidateDiagnostic | null = null;
+  let hitRateLimit = false;
 
   for (const searchQuery of searchQueries) {
     const searchUrl = new URL(`/api/youtube?resource=search&query=${encodeURIComponent(searchQuery)}&limit=${SEARCH_LIMIT}`, appOrigin);
@@ -762,6 +789,7 @@ async function findYouTubeMatchForSourceTrack({
 
     const searchPayload = await searchResponse.json().catch(() => null);
     if (!searchResponse.ok) {
+      if (searchResponse.status === 429) hitRateLimit = true;
       attempts.push({
         searchQuery,
         topCandidates: [],
@@ -921,6 +949,7 @@ async function findYouTubeMatchForSourceTrack({
     confidence: chosenConfidence,
     searchQuery: chosenSearchQuery,
     diagnostics,
+    rateLimited: !chosenMatch && hitRateLimit,
   };
 }
 
@@ -1370,7 +1399,114 @@ export async function POST(request: NextRequest) {
 
   let cancelledByUser = false;
 
+  // Tracks whose searches were 429-throttled — retried once after the main pass
+  // instead of being counted as permanent failures.
+  const rateLimitRetryQueue: Track[] = [];
+  const RATE_LIMIT_RETRY_GAP_MS = 5_000;
+
+  function recordFailure(sourceTrack: Track, reason: string, matchResult: {
+    searchQuery: string;
+    diagnostics: MatchDiagnostics;
+  }) {
+    failures.push({
+      sourceTrack,
+      reason,
+      searchQuery: matchResult.searchQuery,
+      searchQueries: matchResult.diagnostics.searchQueries,
+      threshold: matchResult.diagnostics.threshold,
+      diagnostics: matchResult.diagnostics,
+      retryEligible: matchMode === "normal",
+    });
+    processedTrackCount += 1;
+    upsertTransferProgress(transferId, {
+      processedTrackCount,
+      transferredCount,
+      failedCount: failures.length,
+      trackResults: markTrackResult(sourceTrack.id, {
+        status: "failed",
+        failureReason: reason,
+      }),
+    });
+  }
+
+  // Search + add for one track.  When `isRetryPass` is false, rate-limited
+  // searches are queued for a later retry rather than recorded as failures.
+  async function processTrack(sourceTrack: Track, isRetryPass: boolean): Promise<void> {
+    // ── Search ──────────────────────────────────────────────────────────────
+    const matchResult = await findYouTubeMatchForSourceTrack({
+      sourceTrack,
+      appOrigin,
+      cookieHeader,
+      matchMode,
+    });
+
+    console.log("[transfer] track matching diagnostics", {
+      transferId,
+      sourceTrack: { id: sourceTrack.id, name: sourceTrack.name, artist: sourceTrack.artist, durationMs: sourceTrack.durationMs },
+      searchQueries: matchResult.diagnostics.searchQueries,
+      threshold: matchResult.diagnostics.threshold,
+      rejectionReason: matchResult.diagnostics.rejectionReason,
+      selectedCandidate: matchResult.diagnostics.selectedCandidate,
+      rateLimited: matchResult.rateLimited,
+      isRetryPass,
+    });
+
+    if (!matchResult.match?.id) {
+      if (matchResult.rateLimited && !isRetryPass) {
+        // Not a permanent failure — queue for the post-transfer retry pass.
+        // The track stays "pending" in the live UI until the retry resolves it.
+        console.log("[transfer] search rate limited — queued for retry pass", {
+          transferId,
+          trackName: sourceTrack.name,
+        });
+        rateLimitRetryQueue.push(sourceTrack);
+        return;
+      }
+      recordFailure(
+        sourceTrack,
+        matchResult.diagnostics.rejectionReason || "Couldn't find a close enough match",
+        matchResult
+      );
+      return;
+    }
+
+    // ── Add to playlist ─────────────────────────────────────────────────────
+    try {
+      const addResponse = await fetchWithRetry(
+        new URL(`/api/youtube?resource=addPlaylistItem`, appOrigin),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", cookie: cookieHeader },
+          body: JSON.stringify({ playlistId: targetPlaylistId, videoId: matchResult.match.id }),
+          cache: "no-store",
+        }
+      );
+
+      const addPayload = await addResponse.json().catch(() => null);
+      if (!addResponse.ok) {
+        recordFailure(sourceTrack, humanizeAddFailureReason(addPayload?.error), matchResult);
+        return;
+      }
+
+      transferredCount += 1;
+      processedTrackCount += 1;
+      upsertTransferProgress(transferId, {
+        processedTrackCount,
+        transferredCount,
+        failedCount: failures.length,
+        trackResults: markTrackResult(sourceTrack.id, { status: "success" }),
+      });
+    } catch (addError) {
+      console.error("[transfer] add error for track", {
+        trackName: sourceTrack.name,
+        error: addError instanceof Error ? addError.message : String(addError),
+      });
+      recordFailure(sourceTrack, "Connection interrupted, please try again", matchResult);
+    }
+  }
+
   try {
+    // ── Main pass ─────────────────────────────────────────────────────────────
     for (const sourceTrack of tracksToProcess) {
       if (isTransferCancellationRequested(transferId)) {
         cancelledByUser = true;
@@ -1384,119 +1520,40 @@ export async function POST(request: NextRequest) {
         currentTrackTotal: tracksToProcess.length,
       });
 
-      // ── Search ──────────────────────────────────────────────────────────────
-      const matchResult = await findYouTubeMatchForSourceTrack({
-        sourceTrack,
-        appOrigin,
-        cookieHeader,
-        matchMode,
-      });
+      await processTrack(sourceTrack, false);
+      await sleep(TRANSFER_STEP_DELAY_MS);
+    }
 
-      console.log("[transfer] track matching diagnostics", {
+    // ── Retry pass for rate-limited searches ─────────────────────────────────
+    if (!cancelledByUser && rateLimitRetryQueue.length > 0) {
+      console.log("[transfer] retrying rate-limited tracks", {
         transferId,
-        sourceTrack: { id: sourceTrack.id, name: sourceTrack.name, artist: sourceTrack.artist, durationMs: sourceTrack.durationMs },
-        searchQueries: matchResult.diagnostics.searchQueries,
-        threshold: matchResult.diagnostics.threshold,
-        rejectionReason: matchResult.diagnostics.rejectionReason,
-        selectedCandidate: matchResult.diagnostics.selectedCandidate,
+        count: rateLimitRetryQueue.length,
+      });
+      upsertTransferProgress(transferId, {
+        statusMessage: "Taking a short breather to keep things smooth...",
       });
 
-      if (!matchResult.match?.id) {
-        failures.push({
-          sourceTrack,
-          reason: matchResult.diagnostics.rejectionReason || "Couldn't find a close enough match",
-          searchQuery: matchResult.searchQuery,
-          searchQueries: matchResult.diagnostics.searchQueries,
-          threshold: matchResult.diagnostics.threshold,
-          diagnostics: matchResult.diagnostics,
-          retryEligible: matchMode === "normal",
-        });
-        processedTrackCount += 1;
-        upsertTransferProgress(transferId, {
-          processedTrackCount,
-          transferredCount,
-          failedCount: failures.length,
-          trackResults: markTrackResult(sourceTrack.id, {
-            status: "failed",
-            failureReason: matchResult.diagnostics.rejectionReason || "Couldn't find a close enough match",
-          }),
-        });
-        await sleep(TRANSFER_STEP_DELAY_MS);
-        continue;
-      }
-
-      // ── Add to playlist ─────────────────────────────────────────────────────
-      try {
-        const addResponse = await fetchWithRetry(
-          new URL(`/api/youtube?resource=addPlaylistItem`, appOrigin),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", cookie: cookieHeader },
-            body: JSON.stringify({ playlistId: targetPlaylistId, videoId: matchResult.match.id }),
-            cache: "no-store",
-          }
-        );
-
-        const addPayload = await addResponse.json().catch(() => null);
-        if (!addResponse.ok) {
-          failures.push({
-            sourceTrack,
-            reason: addPayload?.error ?? "Failed to add matched track to YouTube playlist.",
-            searchQuery: matchResult.searchQuery,
-            searchQueries: matchResult.diagnostics.searchQueries,
-            threshold: matchResult.diagnostics.threshold,
-            diagnostics: matchResult.diagnostics,
-            retryEligible: matchMode === "normal",
-          });
-          processedTrackCount += 1;
-          upsertTransferProgress(transferId, {
-            processedTrackCount,
-            transferredCount,
-            failedCount: failures.length,
-            trackResults: markTrackResult(sourceTrack.id, {
-              status: "failed",
-              failureReason: addPayload?.error ?? "Failed to add matched track to YouTube playlist.",
-            }),
-          });
-          await sleep(TRANSFER_STEP_DELAY_MS);
-          continue;
+      for (const sourceTrack of rateLimitRetryQueue) {
+        if (isTransferCancellationRequested(transferId)) {
+          cancelledByUser = true;
+          break;
         }
 
-        transferredCount += 1;
-        processedTrackCount += 1;
+        // 5-second gap before each retry search to let the rate limit cool off
+        await sleep(RATE_LIMIT_RETRY_GAP_MS);
+
         upsertTransferProgress(transferId, {
-          processedTrackCount,
-          transferredCount,
-          failedCount: failures.length,
-          trackResults: markTrackResult(sourceTrack.id, { status: "success" }),
+          currentTrackName: sourceTrack.name,
+          currentTrackArtist: sourceTrack.artist,
+          currentTrackIndex: processedTrackCount + 1,
+          currentTrackTotal: tracksToProcess.length,
         });
-      } catch (addError) {
-        console.error("[transfer] add error for track", {
-          trackName: sourceTrack.name,
-          error: addError instanceof Error ? addError.message : String(addError),
-        });
-        failures.push({
-          sourceTrack,
-          reason: "Failed to add track — connection error.",
-          searchQuery: matchResult.searchQuery,
-          searchQueries: matchResult.diagnostics.searchQueries,
-          threshold: matchResult.diagnostics.threshold,
-          diagnostics: matchResult.diagnostics,
-          retryEligible: matchMode === "normal",
-        });
-        processedTrackCount += 1;
-        upsertTransferProgress(transferId, {
-          processedTrackCount,
-          transferredCount,
-          failedCount: failures.length,
-          trackResults: markTrackResult(sourceTrack.id, {
-            status: "failed",
-            failureReason: "Failed to add track — connection error.",
-          }),
-        });
+
+        await processTrack(sourceTrack, true);
       }
 
-      await sleep(TRANSFER_STEP_DELAY_MS);
+      upsertTransferProgress(transferId, { statusMessage: undefined });
     }
   } catch (loopError) {
     console.error("[transfer] transfer loop crashed", loopError);
