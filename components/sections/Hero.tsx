@@ -13,7 +13,7 @@ const AppleIcon = () => (
 );
 
 const YouTubeIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="#ff4444">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="#FF0000">
     <path d="M23.495 6.205a3.007 3.007 0 0 0-2.088-2.088c-1.87-.501-9.396-.501-9.396-.501s-7.507-.01-9.396.501A3.007 3.007 0 0 0 .527 6.205a31.247 31.247 0 0 0-.522 5.805 31.247 31.247 0 0 0 .522 5.783 3.007 3.007 0 0 0 2.088 2.088c1.868.502 9.396.502 9.396.502s7.506 0 9.396-.502a3.007 3.007 0 0 0 2.088-2.088 31.247 31.247 0 0 0 .5-5.783 31.247 31.247 0 0 0-.5-5.805zM9.609 15.601V8.408l6.264 3.602z"/>
   </svg>
 );
@@ -22,7 +22,7 @@ export default function Hero() {
   const platforms = [
     { key: "spotify", label: "Spotify",       color: "#1ed760", icon: <SpotifyIcon /> },
     { key: "apple",   label: "Apple Music",   color: "#fc3c44", icon: <AppleIcon /> },
-    { key: "youtube", label: "YouTube Music", color: "#ff4444", icon: <YouTubeIcon /> },
+    { key: "youtube", label: "YouTube Music", color: "#FF0000", icon: <YouTubeIcon /> },
   ];
 
   return (

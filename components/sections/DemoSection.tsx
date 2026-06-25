@@ -14,7 +14,7 @@ const SpotifyIcon = () => (
 );
 
 const YouTubeIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="#ff4444">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="#FF0000">
     <path d="M23.495 6.205a3.007 3.007 0 0 0-2.088-2.088c-1.87-.501-9.396-.501-9.396-.501s-7.507-.01-9.396.501A3.007 3.007 0 0 0 .527 6.205a31.247 31.247 0 0 0-.522 5.805 31.247 31.247 0 0 0 .522 5.783 3.007 3.007 0 0 0 2.088 2.088c1.868.502 9.396.502 9.396.502s7.506 0 9.396-.502a3.007 3.007 0 0 0 2.088-2.088 31.247 31.247 0 0 0 .5-5.783 31.247 31.247 0 0 0-.5-5.805zM9.609 15.601V8.408l6.264 3.602z"/>
   </svg>
 );
@@ -265,8 +265,8 @@ export default function DemoSection() {
           <StaticPlatformInput
             icon={<YouTubeIcon />}
             label="YouTube Music"
-            connectedBg="rgba(255,68,68,0.15)"
-            connectedColor="#ff4444"
+            connectedBg="rgba(255,0,0,0.15)"
+            connectedColor="#FF0000"
           />
         </div>
 

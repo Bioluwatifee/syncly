@@ -14,7 +14,7 @@ const config: Config = {
         accent: "#e8c547",
         accent2: "#e85f47",
         spotify: "#1ed760",
-        youtube: "#ff4444",
+        youtube: "#FF0000",
         apple: "#fc3c44",
         muted: "#6b6870",
         "text-primary": "#f0ede8",

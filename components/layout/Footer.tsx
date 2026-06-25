@@ -80,6 +80,14 @@ export default function Footer() {
         >
           Privacy
         </a>
+        <a
+          href="/terms"
+          style={{ fontSize: 13, color: "#6b6870", textDecoration: "none", transition: "color 0.2s" }}
+          onMouseEnter={e => (e.currentTarget.style.color = "#f0ede8")}
+          onMouseLeave={e => (e.currentTarget.style.color = "#6b6870")}
+        >
+          Terms
+        </a>
       </div>
 
     </footer>
