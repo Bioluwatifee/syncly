@@ -402,14 +402,6 @@ html, body {
   .platform-side-mobile-label { display: block; }
 }
 
-/* ─── DemoSection: platform row stacks vertically on mobile ─────────────── */
-@media (max-width: 768px) {
-  .demo-platform-labels { display: none !important; }
-  .platform-row-inner   { flex-direction: column !important; align-items: stretch !important; gap: 12px !important; }
-  .demo-platform-side   { flex: none !important; width: 100% !important; }
-  .swap-icon-wrap       { align-self: center !important; }
-}
-
 /* ─── Transfer page: platform side fixes on mobile ─────────────────────── */
 @media (max-width: 600px) {
   /* Show full platform name — enough space when stacked full-width */
@@ -428,16 +420,3 @@ html, body {
   }
 }
 
-/* ─── DemoSection: platform name + swap icon fixes on mobile ────────────── */
-@media (max-width: 768px) {
-  /* Show full platform name */
-  .platform-label-text {
-    overflow: visible !important;
-    text-overflow: unset !important;
-    display: inline !important;
-  }
-  /* Rotate swap icon to point vertically */
-  .swap-icon-wrap {
-    transform: rotate(90deg) !important;
-  }
-}

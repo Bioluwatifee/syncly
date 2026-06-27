@@ -160,6 +160,7 @@ function PlatformSide({ label, selected, connected, onSelect, onConnect, onDisco
 
       {/* Unified input + button container */}
       <div
+        className="platform-side-box"
         style={{
           display: "flex", alignItems: "center",
           width: "100%",
