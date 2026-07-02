@@ -31,7 +31,7 @@ const SpotifyInputLogo = () => (
 
 const YouTubeInputLogo = () => (
   <img
-    src="/platform-logos/youtube-music-logo.png"
+    src="/platform-logos/youtube-icon-official.png"
     alt="YouTube Music"
     style={{ height: 24, width: "auto", display: "block" }}
   />
@@ -48,7 +48,7 @@ const AppleInputLogo = () => (
 const YouTubeDropdownLogo = () => (
   <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
     <img
-      src="/platform-logos/youtube-music-logo.png"
+      src="/platform-logos/youtube-icon-official.png"
       alt="YouTube Music"
       style={{ height: 26, width: "auto", display: "block" }}
     />
