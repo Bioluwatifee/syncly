@@ -30,11 +30,19 @@ const SpotifyInputLogo = () => (
 );
 
 const YouTubeInputLogo = () => (
-  <img
-    src="/platform-logos/youtube-icon-official.png"
-    alt="YouTube Music"
-    style={{ height: 24, width: "auto", display: "block" }}
-  />
+  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+    <img
+      src="/platform-logos/youtube-icon-official.png"
+      alt="YouTube Music"
+      style={{ height: 24, width: "auto", display: "block", flexShrink: 0 }}
+    />
+    <span style={{
+      fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: "#fff",
+      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+    }}>
+      YouTube Music
+    </span>
+  </div>
 );
 
 const AppleInputLogo = () => (
@@ -46,12 +54,18 @@ const AppleInputLogo = () => (
 );
 
 const YouTubeDropdownLogo = () => (
-  <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
     <img
       src="/platform-logos/youtube-icon-official.png"
       alt="YouTube Music"
-      style={{ height: 26, width: "auto", display: "block" }}
+      style={{ height: 26, width: "auto", display: "block", flexShrink: 0 }}
     />
+    <span style={{
+      fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: "#fff",
+      whiteSpace: "nowrap",
+    }}>
+      YouTube Music
+    </span>
   </div>
 );
 
