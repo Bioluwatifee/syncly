@@ -756,11 +756,15 @@ async function findYouTubeMatchForSourceTrack({
   appOrigin,
   cookieHeader,
   matchMode,
+  onSearchRequest,
 }: {
   sourceTrack: Track;
   appOrigin: string;
   cookieHeader: string;
   matchMode: "normal" | "relaxed";
+  // Pure-logging hook — invoked immediately before each YouTube search request
+  // fires. Does not affect control flow, timing, or the request itself.
+  onSearchRequest?: (info: { query: string }) => void;
 }): Promise<{
   match: Track | null;
   confidence: number;
@@ -780,6 +784,8 @@ async function findYouTubeMatchForSourceTrack({
   let hitRateLimit = false;
 
   for (const searchQuery of searchQueries) {
+    // Instrumentation only — records the search before it fires. No behavior change.
+    onSearchRequest?.({ query: searchQuery });
     const searchUrl = new URL(`/api/youtube?resource=search&query=${encodeURIComponent(searchQuery)}&limit=${SEARCH_LIMIT}`, appOrigin);
     const searchResponse = await fetchWithRetry(searchUrl, {
       method: "GET",
@@ -789,7 +795,14 @@ async function findYouTubeMatchForSourceTrack({
 
     const searchPayload = await searchResponse.json().catch(() => null);
     if (!searchResponse.ok) {
-      if (searchResponse.status === 429) hitRateLimit = true;
+      if (searchResponse.status === 429) {
+        hitRateLimit = true;
+        console.warn("[transfer:instrument] youtube search returned 429", {
+          track: `${sourceTrack.name} — ${sourceTrack.artist}`,
+          query: searchQuery,
+          error: searchPayload?.error ?? null,
+        });
+      }
       attempts.push({
         searchQuery,
         topCandidates: [],
@@ -1404,6 +1417,67 @@ export async function POST(request: NextRequest) {
   const rateLimitRetryQueue: Track[] = [];
   const RATE_LIMIT_RETRY_GAP_MS = 5_000;
 
+  // ── Instrumentation (pure logging — no delays, no throttling, no flow change) ──
+  // Gives visibility into which ceiling gets hit if a transfer stops early:
+  //   • timestamps + running count of every YouTube search request
+  //   • an approximate rolling-60s search count that mirrors the youtube route's
+  //     45-per-minute internal cap (the authoritative cap-hit log lives in
+  //     app/api/youtube/route.ts)
+  //   • a one-time warning as we approach the 5-minute function timeout
+  const FUNCTION_TIMEOUT_MS = maxDuration * 1000; // 300_000 (Vercel maxDuration)
+  const TIMEOUT_WARN_AT_MS = FUNCTION_TIMEOUT_MS * 0.8; // warn at 80% (240s)
+  const INTERNAL_SEARCH_CAP_PER_MIN = 45; // matches YOUTUBE_RATE_LIMIT in youtube route
+  let youtubeSearchCount = 0;
+  let searchWindowStartedAt = Date.now();
+  let searchWindowCount = 0;
+  let timeoutWarningLogged = false;
+
+  function logYoutubeSearchRequest(query: string) {
+    youtubeSearchCount += 1;
+    const now = Date.now();
+    const elapsedMs = now - routeStartedAt;
+
+    // Approximate rolling 60s window (independent of the youtube route's fixed
+    // window — this is an early-warning estimate, not the authoritative counter).
+    if (now - searchWindowStartedAt >= 60_000) {
+      searchWindowStartedAt = now;
+      searchWindowCount = 0;
+    }
+    searchWindowCount += 1;
+
+    console.log("[transfer:instrument] youtube search request", {
+      transferId,
+      searchNumber: youtubeSearchCount,
+      query,
+      atIso: new Date(now).toISOString(),
+      elapsedSec: Math.floor(elapsedMs / 1000),
+      approxSearchesInLast60s: searchWindowCount,
+      processedTracksSoFar: processedTrackCount,
+    });
+
+    if (searchWindowCount >= INTERNAL_SEARCH_CAP_PER_MIN) {
+      console.warn("[transfer:instrument] at/over approx 45-searches-per-minute internal cap", {
+        transferId,
+        approxSearchesInLast60s: searchWindowCount,
+        windowStartedIso: new Date(searchWindowStartedAt).toISOString(),
+        note: "authoritative cap-hit is logged as [youtube:instrument] in the youtube route",
+      });
+    }
+
+    if (!timeoutWarningLogged && elapsedMs >= TIMEOUT_WARN_AT_MS) {
+      timeoutWarningLogged = true;
+      console.warn("[transfer:instrument] approaching 5-minute function timeout", {
+        transferId,
+        elapsedSec: Math.floor(elapsedMs / 1000),
+        timeoutSec: FUNCTION_TIMEOUT_MS / 1000,
+        remainingSec: Math.floor((FUNCTION_TIMEOUT_MS - elapsedMs) / 1000),
+        searchesSoFar: youtubeSearchCount,
+        processedTracksSoFar: processedTrackCount,
+        transferredSoFar: transferredCount,
+      });
+    }
+  }
+
   function recordFailure(sourceTrack: Track, reason: string, matchResult: {
     searchQuery: string;
     diagnostics: MatchDiagnostics;
@@ -1438,6 +1512,7 @@ export async function POST(request: NextRequest) {
       appOrigin,
       cookieHeader,
       matchMode,
+      onSearchRequest: ({ query }) => logYoutubeSearchRequest(query),
     });
 
     console.log("[transfer] track matching diagnostics", {

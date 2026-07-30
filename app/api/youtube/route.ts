@@ -154,6 +154,23 @@ async function handleYoutubeResponse(response: Response) {
     const retryAfterSec = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : undefined;
 
     if (response.status === 429) {
+      // Instrumentation only — read Google's actual response body to surface the
+      // real reason (quotaExceeded / rateLimitExceeded / userRateLimitExceeded).
+      // Safe to consume the body here: the 429 path throws and never reads it
+      // otherwise. Thrown error is unchanged.
+      const rawBody = await response.text().catch(() => null);
+      let parsedReason: string | null = null;
+      try {
+        parsedReason = rawBody ? (JSON.parse(rawBody)?.error?.errors?.[0]?.reason ?? null) : null;
+      } catch {
+        parsedReason = null;
+      }
+      console.log("[youtube:instrument] 429 from Google — raw response body", {
+        reason: parsedReason,
+        retryAfterSec: retryAfterSec ?? null,
+        body: rawBody ? rawBody.slice(0, 1000) : null,
+        atIso: new Date().toISOString(),
+      });
       throw new UpstreamApiError("YouTube rate limit reached. Please wait a minute and try again.", 429, retryAfterSec);
     }
 
@@ -326,6 +343,15 @@ export async function GET(request: NextRequest) {
   const ip = getClientIp(request);
   const limit = checkRateLimit(`youtube:${resource ?? "default"}:${ip}`, YOUTUBE_RATE_LIMIT.limit, YOUTUBE_RATE_LIMIT.windowMs);
   if (!limit.allowed) {
+    // Instrumentation only — authoritative log of the internal 45/min read cap
+    // tripping. Response is unchanged.
+    console.warn("[youtube:instrument] internal per-minute rate cap hit (read)", {
+      resource: resource ?? "default",
+      limit: YOUTUBE_RATE_LIMIT.limit,
+      windowMs: YOUTUBE_RATE_LIMIT.windowMs,
+      retryAfterSec: limit.retryAfterSec,
+      atIso: new Date().toISOString(),
+    });
     return NextResponse.json(
       { error: "YouTube rate limit reached. Please wait a minute and try again." },
       { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } }
@@ -427,6 +453,15 @@ export async function POST(request: NextRequest) {
   const ip = getClientIp(request);
   const limit = checkRateLimit(`youtube:write:${resource ?? "default"}:${ip}`, YOUTUBE_RATE_LIMIT.limit, YOUTUBE_RATE_LIMIT.windowMs);
   if (!limit.allowed) {
+    // Instrumentation only — authoritative log of the internal 45/min write cap
+    // tripping. Response is unchanged.
+    console.warn("[youtube:instrument] internal per-minute rate cap hit (write)", {
+      resource: resource ?? "default",
+      limit: YOUTUBE_RATE_LIMIT.limit,
+      windowMs: YOUTUBE_RATE_LIMIT.windowMs,
+      retryAfterSec: limit.retryAfterSec,
+      atIso: new Date().toISOString(),
+    });
     return NextResponse.json(
       { error: "YouTube rate limit reached. Please wait a minute and try again." },
       { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } }
