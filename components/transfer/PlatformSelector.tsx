@@ -320,6 +320,7 @@ interface Props {
   onToConnect: () => Promise<void> | void;
   onFromDisconnect?: () => void;
   onToDisconnect?: () => void;
+  onSwap?: () => void;
 }
 
 export default function PlatformSelector({
@@ -328,6 +329,7 @@ export default function PlatformSelector({
   onFromSelect, onToSelect,
   onFromConnect, onToConnect,
   onFromDisconnect, onToDisconnect,
+  onSwap,
 }: Props) {
   const [isMobile, setIsMobile] = useState(false);
 
@@ -389,6 +391,9 @@ export default function PlatformSelector({
         >
           <div
             className="swap-icon-circle"
+            role="button"
+            aria-label="Swap source and destination platforms"
+            onClick={() => onSwap?.()}
             style={{
               width: 40,
               height: 40,

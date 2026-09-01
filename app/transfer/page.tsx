@@ -828,7 +828,9 @@ export default function TransferPage() {
     };
   }, []);
 
-  const isDirectionSupported = fromPlatform === "spotify" && toPlatform === "youtube";
+  const isDirectionSupported =
+    (fromPlatform === "spotify" && toPlatform === "youtube") ||
+    (fromPlatform === "youtube" && toPlatform === "spotify");
   const fromSessionReady =
     fromPlatform === "spotify" ? !spotifySessionExpired : fromPlatform === "youtube" ? !youtubeSessionExpired : false;
   const toSessionReady =
@@ -841,7 +843,7 @@ export default function TransferPage() {
     : !fromConnectedEffective || !toConnectedEffective
       ? "Connect both platforms."
       : !isDirectionSupported
-        ? "Only Spotify -> YouTube Music is supported right now."
+        ? "Only Spotify <-> YouTube Music transfers are supported right now."
         : !selectedId
           ? "Select a source playlist to enable transfer."
           : null;
@@ -1396,6 +1398,36 @@ export default function TransferPage() {
     setToConnected(connected);
   }
 
+  // Swap arrow: flips From <-> To (platform + connected state) and resets the
+  // source playlist list so the new source's playlists load fresh.
+  function handleSwapDirection() {
+    if (!fromPlatform || !toPlatform) {
+      notify({
+        tone: "info",
+        title: "Pick both platforms first",
+        description: "Choose a source and destination before swapping.",
+      });
+      return;
+    }
+    resetTransferSession();
+
+    const nextFrom = toPlatform;
+    const nextTo = fromPlatform;
+    setFromPlatform(nextFrom);
+    setToPlatform(nextTo);
+    setFromConnected(nextFrom === "spotify" ? spotifyAccountConnected : nextFrom === "youtube" ? youtubeAccountConnected : false);
+    setToConnected(nextTo === "spotify" ? spotifyAccountConnected : nextTo === "youtube" ? youtubeAccountConnected : false);
+
+    // Reset source playlist state — the loaded list belonged to the old source.
+    setPlaylists([]);
+    setSelectedId(null);
+    setPlaylistCountLoadingId(null);
+    setPlaylistCountCooldownUntil(0);
+    playlistCountInFlightRef.current = false;
+    setHasLoadedSpotifyPlaylists(false);
+    setHasAttemptedSpotifyLoad(false);
+  }
+
   async function fetchPlaylistCountByIntent(playlistId: string) {
     if (!hostReady) return;
     if (!fromConnectedEffective) return;
@@ -1735,6 +1767,24 @@ export default function TransferPage() {
       ? payload.overallStatus
       : (transferredCount === 0 ? "failure" : failedCount > 0 ? "partial" : "success");
 
+    // Full per-track list from the response body. Needed in production where the
+    // live progress poll can't read the server's in-memory store, so this is the
+    // only channel that carries the song-by-song results to the client.
+    const trackResultsFromApi: TrackResult[] = Array.isArray(payload?.trackResults)
+      ? payload.trackResults
+          .map((t: any) => ({
+            id: String(t?.id ?? ""),
+            name: String(t?.name ?? ""),
+            artist: String(t?.artist ?? ""),
+            imageUrl: t?.imageUrl ? String(t.imageUrl) : undefined,
+            status: t?.status === "success" || t?.status === "failed" || t?.status === "pending"
+              ? t.status
+              : "pending",
+            failureReason: t?.failureReason ? String(t.failureReason) : undefined,
+          }))
+          .filter((t: TrackResult) => Boolean(t.id && t.name))
+      : [];
+
     setFailedTracks(failuresFromApi);
     setTransferTotal(total);
     setTransferSucceeded(transferredCount);
@@ -1743,24 +1793,35 @@ export default function TransferPage() {
     setTransferDurationMs(transferDuration);
     setTransferCompletedAt(completedAt);
     setTransferOverallStatus(overallStatus);
-    setTransferProgress((current) =>
-      current
-        ? {
-            ...current,
-            status: "done",
-            sourceTrackCount: total,
-            processedTrackCount,
-            transferredCount,
-            failedCount,
-            targetPlaylistId,
-            targetPlaylistUrl,
-            transferDurationMs: transferDuration,
-            completedAt: completedAt ?? undefined,
-            overallStatus,
-            result: payload,
-          }
-        : current
-    );
+    setTransferProgress((current) => {
+      // Prefer the live per-track list accumulated by the progress poll; fall
+      // back to the list from the response payload when the poll never populated
+      // it (production: POST and progress-GET are separate serverless instances
+      // and don't share the in-memory store).
+      const mergedTrackResults =
+        current?.trackResults && current.trackResults.length > 0
+          ? current.trackResults
+          : trackResultsFromApi.length > 0
+            ? trackResultsFromApi
+            : current?.trackResults;
+      const base: TransferProgress =
+        current ?? { transferId: activeTransferId ?? "", status: "done", updatedAt: Date.now() };
+      return {
+        ...base,
+        status: "done",
+        sourceTrackCount: total,
+        processedTrackCount,
+        transferredCount,
+        failedCount,
+        trackResults: mergedTrackResults,
+        targetPlaylistId,
+        targetPlaylistUrl,
+        transferDurationMs: transferDuration,
+        completedAt: completedAt ?? undefined,
+        overallStatus,
+        result: payload,
+      };
+    });
 
     if (total === 0) {
       setTransferView("idle");
@@ -2211,6 +2272,7 @@ export default function TransferPage() {
               onToConnect={handleToConnect}
               onFromDisconnect={handleFromDisconnect}
               onToDisconnect={handleToDisconnect}
+              onSwap={handleSwapDirection}
             />
           </div>
 

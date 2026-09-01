@@ -751,19 +751,24 @@ function scoreCandidate(sourceTrack: Track, candidate: Track, threshold: number)
   };
 }
 
-async function findYouTubeMatchForSourceTrack({
+async function findMatchForSourceTrack({
   sourceTrack,
   appOrigin,
   cookieHeader,
   matchMode,
+  searchPlatform = "youtube",
   onSearchRequest,
 }: {
   sourceTrack: Track;
   appOrigin: string;
   cookieHeader: string;
   matchMode: "normal" | "relaxed";
-  // Pure-logging hook — invoked immediately before each YouTube search request
-  // fires. Does not affect control flow, timing, or the request itself.
+  // Which platform's search API to query for candidates. Both /api/youtube and
+  // /api/spotify return the identical track shape, so the scoring/fallback logic
+  // below is unchanged regardless of platform.
+  searchPlatform?: SupportedPlatform;
+  // Pure-logging hook — invoked immediately before each search request fires.
+  // Does not affect control flow, timing, or the request itself.
   onSearchRequest?: (info: { query: string }) => void;
 }): Promise<{
   match: Track | null;
@@ -786,7 +791,7 @@ async function findYouTubeMatchForSourceTrack({
   for (const searchQuery of searchQueries) {
     // Instrumentation only — records the search before it fires. No behavior change.
     onSearchRequest?.({ query: searchQuery });
-    const searchUrl = new URL(`/api/youtube?resource=search&query=${encodeURIComponent(searchQuery)}&limit=${SEARCH_LIMIT}`, appOrigin);
+    const searchUrl = new URL(`/api/${searchPlatform}?resource=search&query=${encodeURIComponent(searchQuery)}&limit=${SEARCH_LIMIT}`, appOrigin);
     const searchResponse = await fetchWithRetry(searchUrl, {
       method: "GET",
       headers: { cookie: cookieHeader },
@@ -797,7 +802,8 @@ async function findYouTubeMatchForSourceTrack({
     if (!searchResponse.ok) {
       if (searchResponse.status === 429) {
         hitRateLimit = true;
-        console.warn("[transfer:instrument] youtube search returned 429", {
+        console.warn("[transfer:instrument] search returned 429", {
+          searchPlatform,
           track: `${sourceTrack.name} — ${sourceTrack.artist}`,
           query: searchQuery,
           error: searchPayload?.error ?? null,
@@ -1057,6 +1063,65 @@ async function fetchSpotifyPlaylistTracksForTransfer(
   return { tracks, state };
 }
 
+/**
+ * Reverse-direction source read: fetches a YouTube Music playlist's tracks via
+ * the internal /api/youtube route (which already paginates and self-refreshes
+ * tokens), then maps them to the shared Track shape.
+ *
+ * NOTE: YouTube track metadata is meaningfully thinner than Spotify's — there is
+ * no duration (durationMs is 0), no ISRC, and the "artist" is the uploading
+ * channel name (often "<Artist> - Topic" or "<Artist>VEVO"). We strip those
+ * channel suffixes here so the shared matcher gets a cleaner artist string;
+ * nothing about the shared matcher itself is changed.
+ */
+function cleanYoutubeChannelName(channel: string): string {
+  return channel
+    .replace(/\s*-\s*topic\s*$/i, "")
+    .replace(/vevo\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchYoutubePlaylistTracksForTransfer(
+  playlistId: string,
+  appOrigin: string,
+  cookieHeader: string
+): Promise<{ tracks: Track[]; status: number; error?: string }> {
+  const url = new URL(`/api/youtube?resource=tracks&playlistId=${encodeURIComponent(playlistId)}`, appOrigin);
+  const response = await fetchWithRetry(url, {
+    method: "GET",
+    headers: { cookie: cookieHeader },
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    return { tracks: [], status: response.status, error: payload?.error ?? "Unable to read YouTube Music playlist." };
+  }
+
+  const rawTracks = Array.isArray(payload?.tracks) ? payload.tracks : [];
+  const tracks: Track[] = rawTracks
+    .map((t: any): Track => ({
+      id: String(t?.id ?? ""),
+      platformId: String(t?.id ?? ""),
+      name: String(t?.name ?? ""),
+      artist: cleanYoutubeChannelName(String(t?.artist ?? "")),
+      album: String(t?.album ?? ""),
+      durationMs: Number.isFinite(Number(t?.durationMs)) ? Math.trunc(Number(t.durationMs)) : 0,
+      imageUrl: t?.imageUrl ? String(t.imageUrl) : undefined,
+    }))
+    .filter((t: Track) => Boolean(t.id && t.name));
+
+  return { tracks, status: 200 };
+}
+
+/** Direction-aware destination playlist URL. */
+function buildTargetPlaylistUrl(targetPlatform: SupportedPlatform | undefined, id: string | null): string | null {
+  if (!id) return null;
+  return targetPlatform === "spotify"
+    ? `https://open.spotify.com/playlist/${id}`
+    : `https://music.youtube.com/playlist?list=${id}`;
+}
+
 async function runKnownPublicPlaylistProbe(state: SpotifySessionState): Promise<{ ok: boolean; status?: number; details?: string }> {
   // Spotify global top 50 playlist as a probe for generic tracks endpoint access.
   const probeId = "37i9dQZEVXbMDoHDwVN2tF";
@@ -1157,6 +1222,21 @@ export async function POST(request: NextRequest) {
   const matchMode = body?.matchMode === "relaxed" ? "relaxed" : "normal";
   const requestedTargetPlaylistId = body?.targetPlaylistId?.trim() || null;
 
+  if (!isSupportedPlatform(sourcePlatform) || !isSupportedPlatform(targetPlatform)) {
+    return NextResponse.json({ error: "Source and target platforms must be spotify or youtube." }, { status: 400 });
+  }
+  const isSpotifyToYoutube = sourcePlatform === "spotify" && targetPlatform === "youtube";
+  const isYoutubeToSpotify = sourcePlatform === "youtube" && targetPlatform === "spotify";
+  if (!isSpotifyToYoutube && !isYoutubeToSpotify) {
+    return NextResponse.json(
+      { error: "Only Spotify <-> YouTube Music transfers are supported right now." },
+      { status: 400 }
+    );
+  }
+  // Candidates are searched on the destination platform. Both /api/youtube and
+  // /api/spotify search return the same track shape, so matching is unchanged.
+  const searchPlatform: SupportedPlatform = targetPlatform;
+
   clearTransferProgress(transferId);
   upsertTransferProgress(transferId, {
     transferId,
@@ -1171,15 +1251,9 @@ export async function POST(request: NextRequest) {
     batchProcessedCount: 0,
     batchSize: 0,
     targetPlaylistId: requestedTargetPlaylistId,
-    targetPlaylistUrl: requestedTargetPlaylistId ? `https://music.youtube.com/playlist?list=${requestedTargetPlaylistId}` : null,
+    targetPlaylistUrl: buildTargetPlaylistUrl(targetPlatform, requestedTargetPlaylistId),
   });
 
-  if (!isSupportedPlatform(sourcePlatform) || !isSupportedPlatform(targetPlatform)) {
-    return NextResponse.json({ error: "Source and target platforms must be spotify or youtube." }, { status: 400 });
-  }
-  if (sourcePlatform !== "spotify" || targetPlatform !== "youtube") {
-    return NextResponse.json({ error: "Only Spotify to YouTube Music transfer is supported right now." }, { status: 400 });
-  }
   if (!playlistId) {
     return NextResponse.json({ error: "playlistId is required." }, { status: 400 });
   }
@@ -1205,32 +1279,74 @@ export async function POST(request: NextRequest) {
     youtubeRefreshPresent: (request.headers.get("cookie") ?? "").includes("syncly_youtube_refresh_token="),
   });
 
-  let sessionId: string | null = null;
-  let spotifyState: SpotifySessionState;
-  try {
-    const resolved = await resolveSpotifyStateAtTransferStart(request);
-    sessionId = resolved.sessionId;
-    spotifyState = resolved.state;
-  } catch (error) {
-    console.error("[transfer] failed before source-track fetch", {
-      elapsedMs: Date.now() - routeStartedAt,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    if (error instanceof SpotifyTransferError) {
-      return buildErrorResponse(request, error.message, error.status, sessionId, transferId);
+  // Source token: only the Spotify→YouTube direction reads Spotify inline (with
+  // the elaborate source-token management). The YouTube→Spotify direction reads
+  // its source via the internal /api/youtube route, which self-manages tokens.
+  let sessionId: string | null = getSessionIdFromRequest(request);
+  let spotifyState: SpotifySessionState | null = null;
+  if (isSpotifyToYoutube) {
+    try {
+      const resolved = await resolveSpotifyStateAtTransferStart(request);
+      sessionId = resolved.sessionId;
+      spotifyState = resolved.state;
+    } catch (error) {
+      console.error("[transfer] failed before source-track fetch", {
+        elapsedMs: Date.now() - routeStartedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (error instanceof SpotifyTransferError) {
+        return buildErrorResponse(request, error.message, error.status, sessionId, transferId);
+      }
+      return buildErrorResponse(request, "Unable to validate Spotify session.", 500, sessionId, transferId);
     }
-    return buildErrorResponse(request, "Unable to validate Spotify session.", 500, sessionId, transferId);
   }
 
+  // Cookie header used for internal platform calls (source read + all writes).
+  // Reassigned as refreshed tokens propagate back from internal responses.
+  let cookieHeader = request.headers.get("cookie") ?? "";
+
+  // Helper: applies refreshed Spotify source-session cookies to a response, but
+  // only in the direction that manages Spotify inline. No-op for the reverse.
+  const applySourceSession = (response: NextResponse) => {
+    if (spotifyState) {
+      applySpotifySessionToResponse(response, request, sessionId, spotifyState);
+    }
+  };
+
   let sourceTracks: Track[] = [];
+  if (isYoutubeToSpotify) {
+    // ── Reverse-direction source read: YouTube Music via internal route ────────
+    try {
+      const ytResult = await fetchYoutubePlaylistTracksForTransfer(playlistId, appOrigin, cookieHeader);
+      if (ytResult.status !== 200) {
+        const isAuthError = ytResult.status === 401 || ytResult.status === 403;
+        const message = isAuthError
+          ? "YouTube Music session expired. Please reconnect YouTube Music."
+          : (ytResult.error ?? "Unable to read the YouTube Music playlist.");
+        console.error("[transfer] youtube source-track fetch failed", {
+          elapsedMs: Date.now() - routeStartedAt,
+          status: ytResult.status,
+          error: ytResult.error ?? null,
+        });
+        return buildErrorResponse(request, message, isAuthError ? 401 : 502, sessionId, transferId);
+      }
+      sourceTracks = ytResult.tracks;
+    } catch (error) {
+      console.error("[transfer] youtube source-track fetch crashed", {
+        elapsedMs: Date.now() - routeStartedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return buildErrorResponse(request, "Unable to read the YouTube Music playlist. Please try again.", 502, sessionId, transferId);
+    }
+  } else {
   try {
-    const sourceTracksResult = await fetchSpotifyPlaylistTracksForTransfer(playlistId, spotifyState);
+    const sourceTracksResult = await fetchSpotifyPlaylistTracksForTransfer(playlistId, spotifyState!);
     sourceTracks = sourceTracksResult.tracks;
     spotifyState = sourceTracksResult.state;
   } catch (error) {
     let friendlyError = "Unable to fetch source playlist tracks.";
     if (error instanceof SpotifyTransferError && error.status === 403) {
-      const probe = await runKnownPublicPlaylistProbe(spotifyState);
+      const probe = await runKnownPublicPlaylistProbe(spotifyState!);
       friendlyError = probe.ok
         ? "This specific Spotify playlist can't be read by the API for your account (access restricted by playlist settings/ownership). Please pick a different playlist."
         : "Spotify denied access while reading playlist tracks. Please reconnect Spotify and try another playlist.";
@@ -1246,6 +1362,7 @@ export async function POST(request: NextRequest) {
       return buildErrorResponse(request, friendlyError, error.status, sessionId, transferId);
     }
     return buildErrorResponse(request, friendlyError, 502, sessionId, transferId);
+  }
   }
 
   console.log("[transfer] source tracks fetched", {
@@ -1271,8 +1388,8 @@ export async function POST(request: NextRequest) {
   const failures: FailureItem[] = [];
   let transferredCount = 0;
   let processedTrackCount = 0;
-  // `let` — may be updated with refreshed YouTube tokens after each internal call
-  let cookieHeader = request.headers.get("cookie") ?? "";
+  // `cookieHeader` is declared earlier and updated with refreshed tokens as
+  // internal calls propagate them back.
 
   // Live per-track results — seeded as "pending" so the UI renders the full list
   // immediately, then flipped to "success"/"failed" as each track resolves.
@@ -1318,7 +1435,7 @@ export async function POST(request: NextRequest) {
       completedAt: new Date().toISOString(),
       targetPlaylistUrl: null,
     });
-    applySpotifySessionToResponse(response, request, sessionId, spotifyState);
+    applySourceSession(response);
     console.log("[transfer] finished early (no tracks)", {
       elapsedMs: Date.now() - routeStartedAt,
     });
@@ -1332,11 +1449,13 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  // ── Create destination YouTube playlist ──────────────────────────────────────
+  // ── Create destination playlist on the target platform ────────────────────
+  const targetLabel = targetPlatform === "spotify" ? "Spotify" : "YouTube Music";
+  const sourceLabel = sourcePlatform === "spotify" ? "Spotify" : "YouTube Music";
   let targetPlaylistId = requestedTargetPlaylistId;
   if (!targetPlaylistId) {
     const createPlaylistResponse = await fetch(
-      new URL(`/api/youtube?resource=createPlaylist`, appOrigin),
+      new URL(`/api/${targetPlatform}?resource=createPlaylist`, appOrigin),
       {
         method: "POST",
         headers: {
@@ -1345,37 +1464,50 @@ export async function POST(request: NextRequest) {
         },
         body: JSON.stringify({
           title: playlistName,
-          description: `Transferred from Spotify by Syncly on ${new Date().toISOString()}`,
+          description: `Transferred from ${sourceLabel} by Syncly on ${new Date().toISOString()}`,
         }),
         cache: "no-store",
       }
     );
 
-    // Propagate any refreshed YouTube tokens back into cookieHeader so all
-    // subsequent search and add calls use the up-to-date access token.
+    // Propagate any refreshed target-platform tokens back into cookieHeader so
+    // subsequent search and add calls use the up-to-date access token. The merge
+    // helper copies any Set-Cookie generically, so it works for both platforms.
     cookieHeader = mergeRefreshedYoutubeCookies(cookieHeader, createPlaylistResponse);
 
     const createPlaylistPayload = await createPlaylistResponse.json().catch(() => null);
     if (!createPlaylistResponse.ok || !createPlaylistPayload?.playlistId) {
       console.error("[transfer] destination playlist creation failed", {
         playlistName,
+        targetPlatform,
         status: createPlaylistResponse.status,
         error: createPlaylistPayload?.error ?? "Unknown create playlist error",
       });
 
-      // Surface YouTube auth errors clearly so the client shows the right message
-      const isYouTubeAuthError = createPlaylistResponse.status === 401 || createPlaylistResponse.status === 403;
-      const errorMessage = isYouTubeAuthError
-        ? "YouTube Music session expired. Please reconnect YouTube Music."
-        : (createPlaylistPayload?.error ?? "Unable to create destination YouTube playlist.");
-      const errorStatus = isYouTubeAuthError ? 401 : (createPlaylistResponse.status || 502);
+      // Distinguish the two very different failure modes:
+      //   • 401 = the session is genuinely expired → "reconnect" is correct.
+      //   • 403 = the token is valid but the account lacks permission for this
+      //     action (e.g. playlist-modify not granted). A refresh won't help, so
+      //     we surface the platform route's accurate 403 message rather than the
+      //     misleading "session expired".
+      const isTargetSessionExpired = createPlaylistResponse.status === 401;
+      const isTargetForbidden = createPlaylistResponse.status === 403;
+      const errorMessage = isTargetSessionExpired
+        ? `${targetLabel} session expired. Please reconnect ${targetLabel}.`
+        : (createPlaylistPayload?.error ??
+            (isTargetForbidden
+              ? `${targetLabel} refused the request (403 Forbidden). Reconnect ${targetLabel} to re-grant permission, then try again.`
+              : `Unable to create destination ${targetLabel} playlist.`));
+      const errorStatus = isTargetSessionExpired ? 401 : (createPlaylistResponse.status || 502);
 
       upsertTransferProgress(transferId, { status: "error", error: errorMessage });
       const response = NextResponse.json({ error: errorMessage }, { status: errorStatus });
-      applySpotifySessionToResponse(response, request, sessionId, spotifyState);
+      applySourceSession(response);
       console.error("[transfer] failed during destination playlist creation", {
         elapsedMs: Date.now() - routeStartedAt,
-        isYouTubeAuthError,
+        status: createPlaylistResponse.status,
+        isTargetSessionExpired,
+        isTargetForbidden,
       });
       return response;
     }
@@ -1384,6 +1516,7 @@ export async function POST(request: NextRequest) {
     console.log("[transfer] destination playlist created", {
       elapsedMs: Date.now() - routeStartedAt,
       playlistName,
+      targetPlatform,
       targetPlaylistId,
     });
   } else {
@@ -1406,7 +1539,7 @@ export async function POST(request: NextRequest) {
     batchProcessedCount: 0,
     batchSize: 0,
     targetPlaylistId,
-    targetPlaylistUrl: targetPlaylistId ? `https://music.youtube.com/playlist?list=${targetPlaylistId}` : null,
+    targetPlaylistUrl: buildTargetPlaylistUrl(targetPlatform, targetPlaylistId),
     trackResults: [...trackResultsSnapshot],
   });
 
@@ -1506,12 +1639,13 @@ export async function POST(request: NextRequest) {
   // Search + add for one track.  When `isRetryPass` is false, rate-limited
   // searches are queued for a later retry rather than recorded as failures.
   async function processTrack(sourceTrack: Track, isRetryPass: boolean): Promise<void> {
-    // ── Search ──────────────────────────────────────────────────────────────
-    const matchResult = await findYouTubeMatchForSourceTrack({
+    // ── Search (on the destination platform) ──────────────────────────────────
+    const matchResult = await findMatchForSourceTrack({
       sourceTrack,
       appOrigin,
       cookieHeader,
       matchMode,
+      searchPlatform,
       onSearchRequest: ({ query }) => logYoutubeSearchRequest(query),
     });
 
@@ -1545,14 +1679,19 @@ export async function POST(request: NextRequest) {
       return;
     }
 
-    // ── Add to playlist ─────────────────────────────────────────────────────
+    // ── Add to playlist (on the destination platform) ─────────────────────────
     try {
+      // YouTube adds by videoId; Spotify adds by trackId. Both go one-per-call
+      // to keep the per-track success/fail semantics identical across directions.
+      const addBody = targetPlatform === "spotify"
+        ? { playlistId: targetPlaylistId, trackId: matchResult.match.id }
+        : { playlistId: targetPlaylistId, videoId: matchResult.match.id };
       const addResponse = await fetchWithRetry(
-        new URL(`/api/youtube?resource=addPlaylistItem`, appOrigin),
+        new URL(`/api/${targetPlatform}?resource=addPlaylistItem`, appOrigin),
         {
           method: "POST",
           headers: { "Content-Type": "application/json", cookie: cookieHeader },
-          body: JSON.stringify({ playlistId: targetPlaylistId, videoId: matchResult.match.id }),
+          body: JSON.stringify(addBody),
           cache: "no-store",
         }
       );
@@ -1639,7 +1778,7 @@ export async function POST(request: NextRequest) {
       { error: "Transfer failed unexpectedly during processing. Please try again." },
       { status: 502 }
     );
-    applySpotifySessionToResponse(response, request, sessionId, spotifyState);
+    applySourceSession(response);
     upsertTransferProgress(transferId, {
       status: "error",
       error: "Transfer failed unexpectedly during processing. Please try again.",
@@ -1662,7 +1801,7 @@ export async function POST(request: NextRequest) {
 
     const cancelledCompletedAt = new Date().toISOString();
     const cancelledDurationMs = Date.now() - routeStartedAt;
-    const cancelledTargetPlaylistUrl = targetPlaylistId ? `https://music.youtube.com/playlist?list=${targetPlaylistId}` : null;
+    const cancelledTargetPlaylistUrl = buildTargetPlaylistUrl(targetPlatform, targetPlaylistId);
 
     const response = NextResponse.json({
       transferId,
@@ -1673,6 +1812,7 @@ export async function POST(request: NextRequest) {
       failedCount: failures.length,
       failedTracks: failures,
       failures,
+      trackResults: trackResultsSnapshot,
       targetPlaylistId,
       targetPlaylistUrl: cancelledTargetPlaylistUrl,
       transferDurationMs: cancelledDurationMs,
@@ -1681,7 +1821,7 @@ export async function POST(request: NextRequest) {
       cancelled: true,
       truncated: true,
     });
-    applySpotifySessionToResponse(response, request, sessionId, spotifyState);
+    applySourceSession(response);
     upsertTransferProgress(transferId, {
       status: "cancelled",
       overallStatus: "cancelled",
@@ -1727,7 +1867,7 @@ export async function POST(request: NextRequest) {
   const completedAt = new Date().toISOString();
   const transferDurationMs = Date.now() - routeStartedAt;
   const overallStatus = failedCount === 0 ? "success" : transferredCount > 0 ? "partial" : "failure";
-  const targetPlaylistUrl = targetPlaylistId ? `https://music.youtube.com/playlist?list=${targetPlaylistId}` : null;
+  const targetPlaylistUrl = buildTargetPlaylistUrl(targetPlatform, targetPlaylistId);
   const payload = {
     transferId,
     playlistName,
@@ -1737,6 +1877,11 @@ export async function POST(request: NextRequest) {
     failedCount,
     failedTracks: failures,
     failures,
+    // Full per-track result list (success + failed, in order). Included in the
+    // response body so the client can render the song-by-song list even when the
+    // live progress poll can't reach the in-memory store (e.g. the POST and the
+    // progress GET run as separate serverless instances in production).
+    trackResults: trackResultsSnapshot,
     targetPlaylistId,
     targetPlaylistUrl,
     transferDurationMs,
@@ -1746,7 +1891,7 @@ export async function POST(request: NextRequest) {
   };
 
   const response = NextResponse.json(payload);
-  applySpotifySessionToResponse(response, request, sessionId, spotifyState);
+  applySourceSession(response);
   upsertTransferProgress(transferId, {
     status: "done",
     playlistName,

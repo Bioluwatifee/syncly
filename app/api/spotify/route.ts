@@ -176,8 +176,19 @@ async function spotifyRequest(accessToken: string, endpoint: string) {
       throw new UpstreamApiError("Spotify rate limit reached. Please wait about 60s and try again.", 429, retryAfterSec);
     }
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       throw new UpstreamApiError("Spotify session expired. Please reconnect Spotify.", 401, undefined, "upstream_unauthorized");
+    }
+
+    // 403 is NOT an expiry — a token refresh keeps the original grant's scopes,
+    // so refreshing won't fix it. Report it as its own distinct problem.
+    if (response.status === 403) {
+      throw new UpstreamApiError(
+        "Spotify denied this request (403 Forbidden). The connected account may be missing a permission this action needs — disconnect and reconnect Spotify to re-grant access, then try again.",
+        403,
+        undefined,
+        "forbidden"
+      );
     }
 
     if (response.status >= 500) {
@@ -188,6 +199,178 @@ async function spotifyRequest(accessToken: string, endpoint: string) {
   }
 
   return response.json();
+}
+
+/**
+ * Like spotifyRequest but for write calls that carry a method/body. Spotify's
+ * write endpoints sometimes return an empty body (or a snapshot id), so the JSON
+ * parse is guarded.
+ */
+async function spotifyRequestWithInit(accessToken: string, endpoint: string, init: RequestInit) {
+  const response = await fetchWithTimeout(`${SPOTIFY_API_BASE}${endpoint}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(init.headers ?? {}),
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    // Capture the FULL raw Spotify error body — their error responses carry a
+    // specific `error.message` (and sometimes `error.reason`) explaining exactly
+    // why the request was rejected (invalid id format, malformed body, invalid
+    // client, etc.). We log it verbatim, unsliced.
+    const rawBody = await response.text().catch(() => "");
+    let parsedError: { status?: number; message?: string; reason?: string } | null = null;
+    try {
+      parsedError = JSON.parse(rawBody)?.error ?? null;
+    } catch {
+      parsedError = null;
+    }
+    const upstreamMessage = parsedError?.message ?? "";
+    const upstreamReason = parsedError?.reason ?? "";
+
+    // Best-effort preview of the request body we sent (helps diagnose "malformed
+    // request" style 403s). Never logs auth headers.
+    let requestBodyPreview = "";
+    if (typeof init.body === "string") {
+      requestBodyPreview = init.body.slice(0, 500);
+    }
+
+    console.error("[spotify:request] upstream write error — full detail", {
+      endpoint,
+      requestUrl: `${SPOTIFY_API_BASE}${endpoint}`,
+      method: init.method ?? "GET",
+      status: response.status,
+      statusText: response.statusText,
+      retryAfter: response.headers.get("retry-after"),
+      wwwAuthenticate: response.headers.get("www-authenticate"),
+      upstreamMessage,
+      upstreamReason,
+      requestBodyPreview,
+      rawBody,
+    });
+    const retryAfterHeader = response.headers.get("retry-after");
+    const retryAfterSec = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : undefined;
+
+    if (response.status === 429) {
+      throw new UpstreamApiError("Spotify rate limit reached. Please wait about 60s and try again.", 429, retryAfterSec);
+    }
+    if (response.status === 401) {
+      throw new UpstreamApiError("Spotify session expired. Please reconnect Spotify.", 401, undefined, "upstream_unauthorized");
+    }
+    // 403 Forbidden is a permission problem, not an expiry. Refreshing the token
+    // won't help because a refresh preserves the original grant's scopes. Surface
+    // Spotify's own message so the real reason reaches the user, and report it as
+    // status 403 so it is NOT retried as a 401 or shown as "session expired".
+    if (response.status === 403) {
+      const detail = upstreamMessage ? ` Spotify says: "${upstreamMessage}".` : "";
+      throw new UpstreamApiError(
+        `Spotify refused this action (403 Forbidden).${detail} Reconnect Spotify to re-grant access, then try again.`,
+        403,
+        undefined,
+        "forbidden"
+      );
+    }
+    if (response.status >= 500) {
+      throw new UpstreamApiError("Spotify is temporarily unavailable. Please try again.", 502);
+    }
+    throw new UpstreamApiError("Spotify request failed. Please try again.", 502);
+  }
+
+  const text = await response.text().catch(() => "");
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Creates a new private playlist on the connected user's account via
+ * POST /me/playlists.
+ */
+async function createSpotifyPlaylist(accessToken: string, title: string, description?: string) {
+  // Create against POST /me/playlists — Spotify's current "Create Playlist"
+  // endpoint, which targets the authenticated user directly and needs no user id
+  // in the path. The legacy POST /users/{id}/playlists ("Create Playlist for
+  // user") returns a bare 403 Forbidden for newer apps even with valid tokens and
+  // correct playlist-modify scopes — the same class of silent endpoint
+  // restriction that forced /playlists/{id}/tracks -> /playlists/{id}/items.
+  //
+  // GET /me is still called first purely for diagnostics: it confirms which
+  // account the token actually resolves to. The id is no longer used to build
+  // the request URL, so a wrong/stale id can no longer break creation.
+  let meId: string | null = null;
+  let meDisplayName: string | null = null;
+  try {
+    const me = await spotifyRequest(accessToken, "/me");
+    meId = me?.id ? String(me.id) : null;
+    meDisplayName = me?.display_name ?? null;
+    console.log("[spotify:createPlaylist] account resolved from fresh GET /me", {
+      meId,
+      meDisplayName,
+      meProduct: me?.product ?? null,
+      meCountry: me?.country ?? null,
+      accessTokenPrefix10: accessToken ? accessToken.slice(0, 10) : null,
+      createUrl: "/me/playlists",
+      note: "user id is diagnostic only — not used in the create URL",
+    });
+  } catch (error) {
+    // Never fail creation just because the diagnostic lookup failed.
+    console.warn("[spotify:createPlaylist] GET /me diagnostic failed (continuing)", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const payload = await spotifyRequestWithInit(accessToken, "/me/playlists", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: title,
+      description: description ?? "",
+      public: false,
+    }),
+  });
+
+  const playlistId = String(payload?.id ?? "");
+  console.log("[spotify:createPlaylist] created via POST /me/playlists", {
+    playlistId: playlistId || null,
+    meId,
+  });
+  return playlistId;
+}
+
+/**
+ * Adds one or more tracks to a playlist. Spotify accepts up to 100 track URIs
+ * per request, so ids are chunked. Ids may be bare Spotify track ids or full
+ * `spotify:track:...` URIs.
+ *
+ * Uses POST /playlists/{id}/items — Spotify's current "Add Items to Playlist"
+ * endpoint. The legacy POST /playlists/{id}/tracks is deprecated and returns a
+ * bare 403 Forbidden for newer apps even with valid tokens and correct
+ * playlist-modify scopes. Request body is unchanged between the two forms.
+ */
+async function addSpotifyPlaylistTracks(accessToken: string, playlistId: string, trackIds: string[]) {
+  const uris = trackIds
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .map((id) => (id.startsWith("spotify:track:") ? id : `spotify:track:${id}`));
+  if (uris.length === 0) return 0;
+
+  let added = 0;
+  for (let i = 0; i < uris.length; i += 100) {
+    const chunk = uris.slice(i, i + 100);
+    await spotifyRequestWithInit(accessToken, `/playlists/${encodeURIComponent(playlistId)}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uris: chunk }),
+    });
+    added += chunk.length;
+  }
+  return added;
 }
 
 async function getSpotifyPlaylistTracks(accessToken: string, playlistId: string) {
@@ -533,5 +716,122 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({ error: "Spotify request failed. Please try again." }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const resource = request.nextUrl.searchParams.get("resource");
+  const ip = getClientIp(request);
+  const limit = checkRateLimit(`spotify:write:${resource ?? "default"}:${ip}`, SPOTIFY_RATE_LIMIT.limit, SPOTIFY_RATE_LIMIT.windowMs);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Spotify rate limit reached. Please wait about 60s and try again." },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } }
+    );
+  }
+
+  try {
+    const { accessToken, refreshed, refreshToken, sessionId } = await resolveSpotifyAccessToken(request);
+    if (!accessToken) {
+      return NextResponse.json({ error: "Spotify is not connected." }, { status: 401 });
+    }
+
+    let liveAccessToken = accessToken;
+    let liveRefreshToken = refreshToken;
+    let refreshedAfter401: null | { accessToken: string; refreshToken: string; expiresIn: number } = null;
+
+    const runWithSpotifyAuth = async <T,>(requester: (token: string) => Promise<T>): Promise<T> => {
+      try {
+        return await requester(liveAccessToken);
+      } catch (error) {
+        if (!(error instanceof UpstreamApiError) || error.status !== 401 || !liveRefreshToken) {
+          throw error;
+        }
+        const refreshedToken = await refreshSpotifyToken(liveRefreshToken);
+        liveAccessToken = refreshedToken.accessToken;
+        liveRefreshToken = refreshedToken.refreshToken;
+        refreshedAfter401 = refreshedToken;
+        return requester(liveAccessToken);
+      }
+    };
+
+    let payload: unknown;
+
+    if (resource === "createPlaylist") {
+      const body = (await request.json().catch(() => null)) as { title?: string; description?: string } | null;
+      const title = body?.title?.trim();
+      if (!title) {
+        return NextResponse.json({ error: "Please provide title for resource=createPlaylist." }, { status: 400 });
+      }
+
+      const playlistId = await runWithSpotifyAuth((token) => createSpotifyPlaylist(token, title, body?.description));
+      if (!playlistId) {
+        return NextResponse.json({ error: "Spotify did not return a playlist id." }, { status: 502 });
+      }
+      payload = { playlistId };
+    } else if (resource === "addPlaylistItem") {
+      const body = (await request.json().catch(() => null)) as { playlistId?: string; trackId?: string; trackIds?: string[] } | null;
+      const playlistId = body?.playlistId?.trim();
+      const trackIds = Array.isArray(body?.trackIds)
+        ? body.trackIds.map((id) => String(id))
+        : body?.trackId
+          ? [String(body.trackId)]
+          : [];
+      if (!playlistId || trackIds.length === 0) {
+        return NextResponse.json(
+          { error: "Please provide playlistId and trackId (or trackIds) for resource=addPlaylistItem." },
+          { status: 400 }
+        );
+      }
+
+      const added = await runWithSpotifyAuth((token) => addSpotifyPlaylistTracks(token, playlistId, trackIds));
+      payload = { added };
+    } else {
+      return NextResponse.json(
+        { error: "Unsupported write resource. Use resource=createPlaylist or resource=addPlaylistItem." },
+        { status: 400 }
+      );
+    }
+
+    const response = NextResponse.json(payload);
+    const effectiveRefresh = refreshedAfter401 ?? refreshed;
+    if (effectiveRefresh) {
+      setSpotifyCookie(response, request, spotifyCookies.access, effectiveRefresh.accessToken, effectiveRefresh.expiresIn);
+      setSpotifyCookie(response, request, spotifyCookies.refresh, effectiveRefresh.refreshToken, 60 * 60 * 24 * 90);
+      setSpotifyCookie(
+        response,
+        request,
+        spotifyCookies.expiresAt,
+        (Date.now() + effectiveRefresh.expiresIn * 1000).toString(),
+        effectiveRefresh.expiresIn
+      );
+      if (sessionId) {
+        setPlatformSession(sessionId, "spotify", {
+          accessToken: effectiveRefresh.accessToken,
+          refreshToken: effectiveRefresh.refreshToken,
+          expiresAt: Date.now() + effectiveRefresh.expiresIn * 1000,
+        });
+      }
+    }
+    return response;
+  } catch (error) {
+    if (error instanceof UpstreamApiError) {
+      const headers = error.retryAfterSec ? { "Retry-After": String(error.retryAfterSec) } : undefined;
+      const response = NextResponse.json({ error: error.message }, { status: error.status, headers });
+      if (error.status === 401 && error.reason === "refresh_invalid") {
+        clearSpotifyCookies(response, request);
+        const sessionId = getSessionIdFromRequest(request);
+        if (sessionId) {
+          clearPlatformSession(sessionId, "spotify");
+        }
+      }
+      return response;
+    }
+
+    if (error instanceof Error && error.message === "Spotify request timed out.") {
+      return NextResponse.json({ error: "Spotify request timed out. Please try again." }, { status: 504 });
+    }
+
+    return NextResponse.json({ error: "Spotify write request failed. Please try again." }, { status: 500 });
   }
 }

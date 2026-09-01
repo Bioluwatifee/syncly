@@ -42,8 +42,18 @@ Syncly is a playlist migration tool that transfers playlists between Spotify, Ap
 - Mobile responsive
 - Live on Vercel at synclyy.xyz
 
-## Critical Fix — What Was Blocking Transfer
-Spotify deprecated /playlists/{id}/tracks in favor of /playlists/{id}/items for newer apps. This caused a 403 Forbidden error for weeks. Switching to /items resolved it.
+## Critical Fix — Spotify Silent Endpoint Deprecations
+Spotify silently restricts legacy endpoints for newer apps. The symptom is always the same: a bare 403 Forbidden with no detail in the response body, while the token, scopes, and user ID are all confirmed correct. It is NOT an auth-expiry problem, and refreshing the token never fixes it (a refresh preserves the original grant's scopes).
+
+Three instances hit so far, all fixed by switching to the newer endpoint form:
+
+1. Read playlist tracks: POST/GET /playlists/{id}/tracks → /playlists/{id}/items
+2. Create playlist: POST /users/{id}/playlists → POST /me/playlists (no user ID in path; targets the authenticated user directly)
+3. Add tracks to playlist: POST /playlists/{id}/tracks → POST /playlists/{id}/items (same uris body)
+
+Rule of thumb: when a Spotify call returns a bare 403 and auth is verified good, check developer.spotify.com for a newer form of that endpoint (usually /me/... instead of /users/{id}/..., or /items instead of /tracks) before debugging auth any further. Do not trust model training data on which Spotify endpoint is current — check the live docs.
+
+Error handling note: 401 and 403 must stay separate. 401 = genuinely expired session ("reconnect" is correct). 403 = permission/endpoint problem — mapping it to 401 both shows a misleading "session expired" message and triggers a pointless refresh-and-retry.
 
 ## Current Bugs To Fix
 1. YouTube rate limiting (429) on large playlists — transfer stops after ~27 songs. Need exponential backoff and delays between YouTube search requests
@@ -51,7 +61,7 @@ Spotify deprecated /playlists/{id}/tracks in favor of /playlists/{id}/items for 
 3. middleware.ts deprecation warning — should use proxy.ts only
 
 ## Transfer Technical Details
-- Spotify uses /playlists/{id}/items NOT /playlists/{id}/tracks
+- Spotify endpoints: /playlists/{id}/items (read AND add) NOT /tracks; /me/playlists (create) NOT /users/{id}/playlists — see Critical Fix section
 - Match rate: 100% on 34 songs, drops on larger playlists due to YouTube rate limiting
 - Fallback search strategy: full title+artist → cleaned title+main artist → title only → ISRC
 - Matching threshold: 0.45
