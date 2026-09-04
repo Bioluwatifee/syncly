@@ -1809,7 +1809,7 @@ export async function POST(request: NextRequest) {
     const cancelledDurationMs = Date.now() - routeStartedAt;
     const cancelledTargetPlaylistUrl = buildTargetPlaylistUrl(targetPlatform, targetPlaylistId);
 
-    const response = NextResponse.json({
+    const cancelledPayload = {
       transferId,
       playlistName,
       sourceTrackCount: sourceTracks.length,
@@ -1823,10 +1823,12 @@ export async function POST(request: NextRequest) {
       targetPlaylistUrl: cancelledTargetPlaylistUrl,
       transferDurationMs: cancelledDurationMs,
       completedAt: cancelledCompletedAt,
-      overallStatus: "cancelled",
+      overallStatus: "cancelled" as const,
       cancelled: true,
       truncated: true,
-    });
+    };
+
+    const response = NextResponse.json(cancelledPayload);
     applySourceSession(response);
     upsertTransferProgress(transferId, {
       status: "cancelled",
@@ -1836,7 +1838,11 @@ export async function POST(request: NextRequest) {
       failedCount: failures.length,
       completedAt: cancelledCompletedAt,
       transferDurationMs: cancelledDurationMs,
-      result: null,
+      trackResults: trackResultsSnapshot,
+      // Store the full payload so the progress poll can deliver the cancellation
+      // summary even when the client's transfer POST was already aborted (long
+      // transfers) or landed on a different serverless instance.
+      result: cancelledPayload,
     });
     await flushTransferProgress(transferId);
     await clearTransferCancellation(transferId);

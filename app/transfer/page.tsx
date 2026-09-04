@@ -79,7 +79,7 @@ interface TrackResult {
   };
 }
 
-type TransferViewState = "idle" | "transferring" | "success" | "partial" | "error" | "postRetryFailure";
+type TransferViewState = "idle" | "transferring" | "success" | "partial" | "error" | "postRetryFailure" | "cancelled";
 
 interface TransferProgress {
   transferId: string;
@@ -110,7 +110,7 @@ interface TransferProgress {
   transferDurationMs?: number;
   completedAt?: string;
   error?: string;
-  overallStatus?: "success" | "partial" | "failure";
+  overallStatus?: "success" | "partial" | "failure" | "cancelled";
   result?: any;
   statusMessage?: string;
   updatedAt: number;
@@ -338,6 +338,7 @@ function TransferringState({
   playlist,
   isRetry,
   onCancel,
+  isCancelling = false,
 }: {
   progress: TransferProgress | null;
   total: number;
@@ -345,6 +346,8 @@ function TransferringState({
   playlist: PlaylistItem;
   isRetry?: boolean;
   onCancel: () => void;
+  /** Cancel confirmed; waiting for the backend's cancellation summary. */
+  isCancelling?: boolean;
 }) {
   const trackTotal = Math.max(progress?.sourceTrackCount ?? total, 1);
   const liveTracks = progress?.trackResults ?? [];
@@ -371,7 +374,13 @@ function TransferringState({
         )}
       </div>
       <PlaylistCard playlist={playlist} retryCount={isRetry ? total : undefined} />
-      <ProgressBar done={done} total={trackTotal} label={`${done} out of ${trackTotal} in progress`} />
+      <ProgressBar
+        done={done}
+        total={trackTotal}
+        label={isCancelling
+          ? `Stopping after the current song... ${done} of ${trackTotal} transferred so far`
+          : `${done} out of ${trackTotal} in progress`}
+      />
       <div style={{ marginTop: 4, maxHeight: TRANSFERRING_LIST_MAX_HEIGHT, overflowY: "auto" }}>
         {liveTracks.map((t, i) => (
           <div key={t.id} style={{
@@ -396,15 +405,18 @@ function TransferringState({
       <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
         <button
           onClick={onCancel}
+          disabled={isCancelling}
           style={{
             ...btnWhite,
             flex: "none",
             width: isMobile ? "100%" : "45%",
             minWidth: isMobile ? "auto" : 200,
+            opacity: isCancelling ? 0.55 : 1,
+            cursor: isCancelling ? "default" : "pointer",
           }}
-          onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+          onMouseEnter={e => { if (!isCancelling) e.currentTarget.style.transform = "translateY(-2px)"; }}
           onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
-        >Cancel transfer</button>
+        >{isCancelling ? "Stopping..." : "Cancel transfer"}</button>
       </div>
     </>
   );
@@ -419,6 +431,9 @@ function SuccessState({
   completedAt,
   trackResults,
   onStartAnother,
+  outcome = "success",
+  transferredCount,
+  targetPlaylistUrl = null,
 }: {
   isMobile: boolean;
   playlist: PlaylistItem;
@@ -427,17 +442,45 @@ function SuccessState({
   completedAt: string | null;
   trackResults: TrackResult[];
   onStartAnother: () => void;
+  /** "cancelled" reframes the same screen for a user-cancelled transfer. */
+  outcome?: "success" | "cancelled";
+  /** Songs actually transferred. Defaults to `total` (the all-succeeded case). */
+  transferredCount?: number;
+  targetPlaylistUrl?: string | null;
 }) {
   const completionLabel = formatCompletedAt(completedAt);
+  const isCancelled = outcome === "cancelled";
+  const transferred = transferredCount ?? total;
+  const notTransferred = Math.max(0, total - transferred);
   return (
     <>
       <h2 style={{ fontFamily: "'Calligraffitti', cursive", fontSize: isMobile ? 16 : 24, fontWeight: 400, color: "rgba(255,255,255,0.9)", marginBottom: 16, letterSpacing: "0.1px" }}>
-        Transfer result
+        {isCancelled ? "Transfer cancelled" : "Transfer result"}
       </h2>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: isMobile ? "24px 16px" : "32px 28px" }}>
         <div style={{ textAlign: "center", marginBottom: 4 }}>
-          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>All {total} songs transferred</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>Every song was found and added to your new playlist</div>
+          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#fff", marginBottom: 6 }}>
+            {isCancelled
+              ? `Transfer cancelled, ${transferred} of ${total} songs were transferred`
+              : `All ${total} songs transferred`}
+          </div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>
+            {isCancelled
+              ? "A partial playlist was created and the songs below were already added to it. They will stay there unless you remove them."
+              : "Every song was found and added to your new playlist"}
+          </div>
+          {isCancelled && targetPlaylistUrl && (
+            <div style={{ marginBottom: 16 }}>
+              <a
+                href={targetPlaylistUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 13, color: "#e8c547", textDecoration: "none", fontWeight: 600 }}
+              >
+                Open the partial playlist
+              </a>
+            </div>
+          )}
           <div style={{ marginBottom: 4 }}><PlatformRow /></div>
         </div>
         <div style={{ margin: "20px 0" }}>
@@ -449,8 +492,13 @@ function SuccessState({
             <span>Source tracks</span><strong style={{ color: "#fff" }}>{total}</strong>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
-            <span>Transferred</span><strong style={{ color: "#1ed760" }}>{total}</strong>
+            <span>Transferred</span><strong style={{ color: "#1ed760" }}>{transferred}</strong>
           </div>
+          {isCancelled && (
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
+              <span>Not transferred</span><strong style={{ color: "#e85f47" }}>{notTransferred}</strong>
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "rgba(255,255,255,0.72)" }}>
             <span>Duration</span><strong style={{ color: "#fff" }}>{formatDurationMs(transferDurationMs)}</strong>
           </div>
@@ -477,7 +525,13 @@ function SuccessState({
                       <div style={{ fontSize: 14, fontWeight: 600, color: "#fff", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
                       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{t.artist}</div>
                     </div>
-                    <CheckIcon />
+                    {/* Render by actual per-track status. On a full success every
+                        row is "success", so this is identical to the previous
+                        hardcoded checkmark; on a cancelled run it distinguishes
+                        transferred / failed / never-reached tracks. */}
+                    {t.status === "success" ? <CheckIcon /> : t.status === "failed" ? <XIcon /> : (
+                      <div style={{ width: 26, height: 26, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.15)", flexShrink: 0 }} />
+                    )}
                   </div>
                 ))}
               </div>
@@ -741,6 +795,10 @@ export default function TransferPage() {
   const [disconnectTarget, setDisconnectTarget] = useState<"spotify" | "youtube" | null>(null);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [showCancelTransferConfirm, setShowCancelTransferConfirm] = useState(false);
+  // True from the moment cancel is confirmed until the backend's cancellation
+  // summary arrives. The transfer view stays up (showing "Stopping...") instead
+  // of dumping the user back to the playlist list with no summary.
+  const [isCancellingTransfer, setIsCancellingTransfer] = useState(false);
   const [hostReady, setHostReady] = useState(true);
   const [isPreparingTransfer, setIsPreparingTransfer] = useState(false);
   const [playlistCountLoadingId, setPlaylistCountLoadingId] = useState<string | null>(null);
@@ -753,7 +811,7 @@ export default function TransferPage() {
   const [transferTargetPlaylistUrl, setTransferTargetPlaylistUrl] = useState<string | null>(null);
   const [transferCompletedAt, setTransferCompletedAt] = useState<string | null>(null);
   const [transferDurationMs, setTransferDurationMs] = useState<number>(0);
-  const [transferOverallStatus, setTransferOverallStatus] = useState<"success" | "partial" | "failure" | null>(null);
+  const [transferOverallStatus, setTransferOverallStatus] = useState<"success" | "partial" | "failure" | "cancelled" | null>(null);
   const [transferProgress, setTransferProgress] = useState<TransferProgress | null>(null);
   const [activeTransferPlaylist, setActiveTransferPlaylist] = useState<PlaylistItem | null>(null);
   const [activeTransferId, setActiveTransferId] = useState<string | null>(null);
@@ -765,6 +823,10 @@ export default function TransferPage() {
   const transferButtonAreaRef = useRef<HTMLDivElement | null>(null);
   const transferProgressPollRef = useRef<number | null>(null);
   const transferAbortControllerRef = useRef<AbortController | null>(null);
+  // Safety net: if a cancellation summary never arrives (e.g. the shared store
+  // is unreachable and the POST was already aborted), don't strand the user on
+  // the transferring screen forever.
+  const cancelFallbackTimerRef = useRef<number | null>(null);
   const transferCancelledRef = useRef(false);
   const transferIsRetryAttemptRef = useRef(false);
   const transferResultAppliedRef = useRef(false);
@@ -824,6 +886,9 @@ export default function TransferPage() {
     return () => {
       if (transferProgressPollRef.current !== null) {
         window.clearInterval(transferProgressPollRef.current);
+      }
+      if (cancelFallbackTimerRef.current !== null) {
+        window.clearTimeout(cancelFallbackTimerRef.current);
       }
     };
   }, []);
@@ -1504,6 +1569,11 @@ export default function TransferPage() {
       window.clearInterval(transferProgressPollRef.current);
       transferProgressPollRef.current = null;
     }
+    if (cancelFallbackTimerRef.current !== null) {
+      window.clearTimeout(cancelFallbackTimerRef.current);
+      cancelFallbackTimerRef.current = null;
+    }
+    setIsCancellingTransfer(false);
     setTransferView("idle");
     setFailedTracks([]);
     setTransferTotal(0);
@@ -1529,37 +1599,50 @@ export default function TransferPage() {
 
   function handleConfirmCancelTransfer() {
     setShowCancelTransferConfirm(false);
-    transferCancelledRef.current = true;
 
-    // Tell the backend to stop processing further tracks. Best effort — fire
-    // and forget so the UI resets immediately regardless of network latency.
     const transferIdToCancel = activeTransferId;
-    if (transferIdToCancel) {
-      void fetch("/api/transfer/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transferId: transferIdToCancel }),
-        cache: "no-store",
-        keepalive: true,
-      }).catch(() => {
-        // best effort only — the abort below still stops the client side.
-      });
+    if (!transferIdToCancel) {
+      // Nothing running server-side to summarise — fall back to a plain reset.
+      resetTransferSession();
+      return;
     }
 
-    if (transferAbortControllerRef.current) {
-      transferAbortControllerRef.current.abort();
-      transferAbortControllerRef.current = null;
-    }
-    if (transferProgressPollRef.current !== null) {
-      window.clearInterval(transferProgressPollRef.current);
-      transferProgressPollRef.current = null;
-    }
+    // Ask the backend to stop after the current track. Deliberately do NOT abort
+    // the in-flight transfer POST or kill the progress poll here: those are the
+    // two channels that deliver the cancellation summary (how many songs made it
+    // and which ones). Tearing them down is what previously dumped the user back
+    // to the playlist list with nothing to show.
+    setIsCancellingTransfer(true);
+    void fetch("/api/transfer/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transferId: transferIdToCancel }),
+      cache: "no-store",
+      keepalive: true,
+    }).catch(() => {
+      // Best effort — the transfer may already have finished on its own, in
+      // which case the normal result screen shows instead.
+    });
+
     notify({
       tone: "info",
-      title: "Transfer cancelled",
-      description: "We've stopped this transfer. Songs already added to the destination playlist will remain there.",
+      title: "Stopping transfer",
+      description: "Finishing the current song, then we'll show you a summary of what transferred.",
     });
-    resetTransferSession();
+
+    if (cancelFallbackTimerRef.current !== null) {
+      window.clearTimeout(cancelFallbackTimerRef.current);
+    }
+    cancelFallbackTimerRef.current = window.setTimeout(() => {
+      cancelFallbackTimerRef.current = null;
+      if (transferResultAppliedRef.current) return;
+      notify({
+        tone: "info",
+        title: "Transfer cancelled",
+        description: "We stopped the transfer but couldn't load a summary. Songs already added will remain in the destination playlist.",
+      });
+      resetTransferSession();
+    }, 45_000);
   }
 
   function handleRetry() {
@@ -1763,9 +1846,15 @@ export default function TransferPage() {
       ? Math.max(0, Math.trunc(Number(payload.transferDurationMs)))
       : 0;
     const completedAt = payload?.completedAt ? String(payload.completedAt) : null;
-    const overallStatus = payload?.overallStatus === "success" || payload?.overallStatus === "partial" || payload?.overallStatus === "failure"
-      ? payload.overallStatus
-      : (transferredCount === 0 ? "failure" : failedCount > 0 ? "partial" : "success");
+    // A user-cancelled run is its own outcome — it must not be re-derived into
+    // partial/failure, since "partial" implies songs failed to match rather than
+    // that the user stopped it early.
+    const wasCancelled = payload?.overallStatus === "cancelled" || payload?.cancelled === true;
+    const overallStatus: "success" | "partial" | "failure" | "cancelled" = wasCancelled
+      ? "cancelled"
+      : payload?.overallStatus === "success" || payload?.overallStatus === "partial" || payload?.overallStatus === "failure"
+        ? payload.overallStatus
+        : (transferredCount === 0 ? "failure" : failedCount > 0 ? "partial" : "success");
 
     // Full per-track list from the response body. Needed in production where the
     // live progress poll can't read the server's in-memory store, so this is the
@@ -1835,7 +1924,11 @@ export default function TransferPage() {
       return true;
     }
 
-    if (transferIsRetryAttemptRef.current && failedCount > 0) {
+    if (overallStatus === "cancelled") {
+      // Cancelled takes priority over every other routing rule: the user stopped
+      // it, so show the cancellation summary regardless of match counts.
+      setTransferView("cancelled");
+    } else if (transferIsRetryAttemptRef.current && failedCount > 0) {
       // This was a retry pass (one allowed) and some tracks still failed —
       // show the dedicated post-retry-failure state instead of the normal
       // partial/error screens, since no further retry is offered.
@@ -1849,17 +1942,32 @@ export default function TransferPage() {
     }
 
     transferResultAppliedRef.current = true;
+    // A summary arrived, so the cancellation safety net is no longer needed.
+    setIsCancellingTransfer(false);
+    if (cancelFallbackTimerRef.current !== null) {
+      window.clearTimeout(cancelFallbackTimerRef.current);
+      cancelFallbackTimerRef.current = null;
+    }
     if (options?.notify !== false && !transferNotificationShownRef.current) {
-      const tone = overallStatus === "failure" || transferredCount === 0 ? "error" : "success";
+      const tone = overallStatus === "cancelled"
+        ? "info"
+        : overallStatus === "failure" || transferredCount === 0
+          ? "error"
+          : "success";
       notify({
         tone,
         title:
-          overallStatus === "success"
-            ? "Transfer complete"
-            : overallStatus === "partial"
-              ? "Transfer finished with partial matches"
-              : "Transfer finished with no matches",
-        description: `${transferredCount} transferred, ${failedCount} failed.`,
+          overallStatus === "cancelled"
+            ? "Transfer cancelled"
+            : overallStatus === "success"
+              ? "Transfer complete"
+              : overallStatus === "partial"
+                ? "Transfer finished with partial matches"
+                : "Transfer finished with no matches",
+        description:
+          overallStatus === "cancelled"
+            ? `${transferredCount} of ${total} songs transferred before you stopped it.`
+            : `${transferredCount} transferred, ${failedCount} failed.`,
       });
       transferNotificationShownRef.current = true;
     }
@@ -1941,6 +2049,7 @@ export default function TransferPage() {
     }
 
     setIsPreparingTransfer(true);
+    setIsCancellingTransfer(false);
     setTransferView("transferring");
     setActiveTransferPlaylist(selectedPlaylist);
     setFailedTracks([]);
@@ -1978,10 +2087,15 @@ export default function TransferPage() {
         const progress = await progressResponse.json().catch(() => null);
         if (!progress) return;
         setTransferProgress(progress);
-        if ((progress.status === "done" || progress.status === "error") && progress.result && !transferResultAppliedRef.current) {
+        // "cancelled" is terminal too — the backend stores the full cancellation
+        // summary in `result`, which is the only channel that reaches the client
+        // when the transfer POST was already aborted or ran on another instance.
+        const isTerminal =
+          progress.status === "done" || progress.status === "error" || progress.status === "cancelled";
+        if (isTerminal && progress.result && !transferResultAppliedRef.current) {
           applyTransferPayload(progress.result, { notify: true });
         }
-        if (progress.status === "done" || progress.status === "error") {
+        if (isTerminal) {
           if (transferProgressPollRef.current !== null) {
             window.clearInterval(transferProgressPollRef.current);
             transferProgressPollRef.current = null;
@@ -2329,6 +2443,7 @@ export default function TransferPage() {
               isMobile={isMobile}
               playlist={activeTransferPlaylist}
               onCancel={handleRequestCancelTransfer}
+              isCancelling={isCancellingTransfer}
             />
           )}
 
@@ -2341,6 +2456,22 @@ export default function TransferPage() {
               completedAt={transferCompletedAt}
               trackResults={(transferProgress?.trackResults ?? []) as TrackResult[]}
               onStartAnother={resetTransferSession}
+            />
+          )}
+
+          {/* Cancelled reuses the results screen, reframed for a stopped transfer */}
+          {transferView === "cancelled" && activeTransferPlaylist && (
+            <SuccessState
+              isMobile={isMobile}
+              playlist={activeTransferPlaylist}
+              total={transferTotal}
+              transferDurationMs={transferDurationMs}
+              completedAt={transferCompletedAt}
+              trackResults={(transferProgress?.trackResults ?? []) as TrackResult[]}
+              onStartAnother={resetTransferSession}
+              outcome="cancelled"
+              transferredCount={transferSucceeded}
+              targetPlaylistUrl={transferTargetPlaylistUrl}
             />
           )}
 
