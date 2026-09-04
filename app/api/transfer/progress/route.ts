@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "transferId is required." }, { status: 400 });
   }
 
-  const progress = getTransferProgress(transferId);
+  const progress = await getTransferProgress(transferId);
   if (!progress) {
     return NextResponse.json({ error: "Transfer progress not found." }, { status: 404 });
   }

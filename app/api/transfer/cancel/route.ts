@@ -16,13 +16,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "transferId is required." }, { status: 400 });
   }
 
-  const progress = getTransferProgress(transferId);
+  const progress = await getTransferProgress(transferId);
   if (!progress) {
     // Nothing running server-side (already finished or never started) — treat as a no-op success.
     return NextResponse.json({ ok: true, alreadyFinished: true });
   }
 
-  requestTransferCancellation(transferId);
+  await requestTransferCancellation(transferId);
 
   return NextResponse.json({ ok: true });
 }

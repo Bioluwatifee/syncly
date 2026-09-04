@@ -16,7 +16,7 @@ import {
   getSessionIdFromRequest,
   setPlatformSession,
 } from "@/lib/oauth-session";
-import { clearTransferProgress, clearTransferCancellation, isTransferCancellationRequested, upsertTransferProgress, type TrackResultSnapshot } from "@/lib/transfer-progress";
+import { clearTransferProgress, clearTransferCancellation, flushTransferProgress, isTransferCancellationRequested, upsertTransferProgress, type TrackResultSnapshot } from "@/lib/transfer-progress";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -1144,7 +1144,7 @@ async function runKnownPublicPlaylistProbe(state: SpotifySessionState): Promise<
   }
 }
 
-function buildErrorResponse(
+async function buildErrorResponse(
   request: NextRequest,
   message: string,
   status: number,
@@ -1164,6 +1164,9 @@ function buildErrorResponse(
       error: message,
       result: { error: message, status },
     });
+    // Terminal state — force the write now. An un-awaited throttled flush can be
+    // dropped when the serverless instance freezes right after the response.
+    await flushTransferProgress(transferId);
   }
   return response;
 }
@@ -1237,7 +1240,7 @@ export async function POST(request: NextRequest) {
   // /api/spotify search return the same track shape, so matching is unchanged.
   const searchPlatform: SupportedPlatform = targetPlatform;
 
-  clearTransferProgress(transferId);
+  await clearTransferProgress(transferId);
   upsertTransferProgress(transferId, {
     transferId,
     status: "running",
@@ -1295,9 +1298,9 @@ export async function POST(request: NextRequest) {
         error: error instanceof Error ? error.message : String(error),
       });
       if (error instanceof SpotifyTransferError) {
-        return buildErrorResponse(request, error.message, error.status, sessionId, transferId);
+        return await buildErrorResponse(request, error.message, error.status, sessionId, transferId);
       }
-      return buildErrorResponse(request, "Unable to validate Spotify session.", 500, sessionId, transferId);
+      return await buildErrorResponse(request, "Unable to validate Spotify session.", 500, sessionId, transferId);
     }
   }
 
@@ -1328,7 +1331,7 @@ export async function POST(request: NextRequest) {
           status: ytResult.status,
           error: ytResult.error ?? null,
         });
-        return buildErrorResponse(request, message, isAuthError ? 401 : 502, sessionId, transferId);
+        return await buildErrorResponse(request, message, isAuthError ? 401 : 502, sessionId, transferId);
       }
       sourceTracks = ytResult.tracks;
     } catch (error) {
@@ -1336,7 +1339,7 @@ export async function POST(request: NextRequest) {
         elapsedMs: Date.now() - routeStartedAt,
         error: error instanceof Error ? error.message : String(error),
       });
-      return buildErrorResponse(request, "Unable to read the YouTube Music playlist. Please try again.", 502, sessionId, transferId);
+      return await buildErrorResponse(request, "Unable to read the YouTube Music playlist. Please try again.", 502, sessionId, transferId);
     }
   } else {
   try {
@@ -1359,9 +1362,9 @@ export async function POST(request: NextRequest) {
       spotifyEndpoint: error instanceof SpotifyTransferError ? error.endpoint : undefined,
     });
     if (error instanceof SpotifyTransferError) {
-      return buildErrorResponse(request, friendlyError, error.status, sessionId, transferId);
+      return await buildErrorResponse(request, friendlyError, error.status, sessionId, transferId);
     }
-    return buildErrorResponse(request, friendlyError, 502, sessionId, transferId);
+    return await buildErrorResponse(request, friendlyError, 502, sessionId, transferId);
   }
   }
 
@@ -1446,6 +1449,7 @@ export async function POST(request: NextRequest) {
       transferDurationMs: Date.now() - routeStartedAt,
       completedAt: new Date().toISOString(),
     });
+    await flushTransferProgress(transferId);
     return response;
   }
 
@@ -1501,6 +1505,7 @@ export async function POST(request: NextRequest) {
       const errorStatus = isTargetSessionExpired ? 401 : (createPlaylistResponse.status || 502);
 
       upsertTransferProgress(transferId, { status: "error", error: errorMessage });
+      await flushTransferProgress(transferId);
       const response = NextResponse.json({ error: errorMessage }, { status: errorStatus });
       applySourceSession(response);
       console.error("[transfer] failed during destination playlist creation", {
@@ -1722,7 +1727,7 @@ export async function POST(request: NextRequest) {
   try {
     // ── Main pass ─────────────────────────────────────────────────────────────
     for (const sourceTrack of tracksToProcess) {
-      if (isTransferCancellationRequested(transferId)) {
+      if (await isTransferCancellationRequested(transferId)) {
         cancelledByUser = true;
         break;
       }
@@ -1749,7 +1754,7 @@ export async function POST(request: NextRequest) {
       });
 
       for (const sourceTrack of rateLimitRetryQueue) {
-        if (isTransferCancellationRequested(transferId)) {
+        if (await isTransferCancellationRequested(transferId)) {
           cancelledByUser = true;
           break;
         }
@@ -1787,6 +1792,7 @@ export async function POST(request: NextRequest) {
       failedCount: failures.length,
       result: null,
     });
+    await flushTransferProgress(transferId);
     return response;
   }
 
@@ -1832,7 +1838,8 @@ export async function POST(request: NextRequest) {
       transferDurationMs: cancelledDurationMs,
       result: null,
     });
-    clearTransferCancellation(transferId);
+    await flushTransferProgress(transferId);
+    await clearTransferCancellation(transferId);
     return response;
   }
 
@@ -1906,6 +1913,7 @@ export async function POST(request: NextRequest) {
     overallStatus,
     result: payload,
   });
-  clearTransferCancellation(transferId);
+  await flushTransferProgress(transferId);
+  await clearTransferCancellation(transferId);
   return response;
 }
