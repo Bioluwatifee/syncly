@@ -469,18 +469,6 @@ function SuccessState({
               ? "A partial playlist was created and the songs below were already added to it. They will stay there unless you remove them."
               : "Every song was found and added to your new playlist"}
           </div>
-          {isCancelled && targetPlaylistUrl && (
-            <div style={{ marginBottom: 16 }}>
-              <a
-                href={targetPlaylistUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ fontSize: 13, color: "#e8c547", textDecoration: "none", fontWeight: 600 }}
-              >
-                Open the partial playlist
-              </a>
-            </div>
-          )}
           <div style={{ marginBottom: 4 }}><PlatformRow /></div>
         </div>
         <div style={{ margin: "20px 0" }}>
@@ -539,6 +527,24 @@ function SuccessState({
           </>
         )}
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center", marginTop: trackResults.length > 0 ? 16 : 0 }}>
+          {/* Secondary action — reuses the shared btnWhite style used by
+              "Retry failed songs" / "Cancel transfer" elsewhere. Rendered as an
+              anchor so the playlist opens in a new tab. */}
+          {isCancelled && targetPlaylistUrl && (
+            <a
+              href={targetPlaylistUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                ...btnWhite,
+                ...(isMobile ? {} : { maxWidth: 280 }),
+                display: "flex", alignItems: "center", justifyContent: "center",
+                textDecoration: "none", boxSizing: "border-box",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+              onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
+            >Open the partial playlist</a>
+          )}
           <button style={{ ...btnYellow, ...(isMobile ? {} : { maxWidth: 280 }) }} onClick={onStartAnother}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(232,197,71,0.18)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
@@ -941,6 +947,32 @@ export default function TransferPage() {
     return platform === "spotify"
       ? SPOTIFY_PLAYLIST_COUNT_CACHE_KEY
       : YOUTUBE_PLAYLIST_COUNT_CACHE_KEY;
+  }
+
+  /**
+   * Wipes browser-side cached data for a platform on disconnect, so a page load
+   * after disconnecting can't repopulate the UI from stale local state.
+   * Credentials themselves are httpOnly cookies cleared by the server.
+   */
+  function clearLocalPlatformCaches(platform: "spotify" | "youtube") {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(getCountCacheKey(platform));
+    } catch {
+      // Ignore storage failures for MVP stability.
+    }
+    try {
+      const raw = window.sessionStorage.getItem(PLAYLISTS_SESSION_CACHE_KEY);
+      if (raw) {
+        const cached = JSON.parse(raw) as { platform?: string } | null;
+        // Only drop the cached playlist list if it belongs to this platform.
+        if (cached?.platform === platform) {
+          window.sessionStorage.removeItem(PLAYLISTS_SESSION_CACHE_KEY);
+        }
+      }
+    } catch {
+      // Ignore storage failures for MVP stability.
+    }
   }
 
   function readPlaylistCountCache(platform: "spotify" | "youtube"): Record<string, number> {
@@ -2185,31 +2217,40 @@ export default function TransferPage() {
     void runTransfer(selectedId);
   }
 
+  /**
+   * Fully disconnects a platform. ALWAYS calls the server so the stored access
+   * token, refresh token and server-side session entry are destroyed — a
+   * UI-only "soft" disconnect used to exist here and was the reason the app
+   * silently reconnected: the credentials survived, so the next status check
+   * found them and restored the session.
+   *
+   * `requireFreshAuth` only controls whether the NEXT connect forces the
+   * provider's consent dialog; it never affects whether credentials are cleared.
+   */
   async function disconnectPlatformConnection({
     requireFreshAuth = false,
-    softOnly = false,
-  }: { requireFreshAuth?: boolean; softOnly?: boolean } = {}) {
+  }: { requireFreshAuth?: boolean } = {}) {
     if (!disconnectTarget || isDisconnecting) return;
 
     setIsDisconnecting(true);
     try {
-      if (!softOnly) {
-        const response = await fetch(`/api/auth?action=disconnect&platform=${disconnectTarget}`, {
-          method: "POST",
-        });
+      const response = await fetch(`/api/auth?action=disconnect&platform=${disconnectTarget}`, {
+        method: "POST",
+      });
 
-        if (!response.ok) {
-          const payload = await response.json().catch(() => null);
-          throw new Error(payload?.error ?? "Failed to disconnect platform.");
-        }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error ?? "Failed to disconnect platform.");
       }
+
+      // Drop any locally cached data for this platform so nothing stale can be
+      // restored on the next page load.
+      clearLocalPlatformCaches(disconnectTarget);
 
       if (disconnectTarget === "spotify") {
         setSpotifySessionExpired(false);
         resetTransferSession();
-        if (!softOnly) {
-          setSpotifyAccountConnected(false);
-        }
+        setSpotifyAccountConnected(false);
         if (fromPlatform === "spotify") {
           setFromConnected(false);
         }
@@ -2231,27 +2272,17 @@ export default function TransferPage() {
           }
         }
 
-        if (softOnly) {
-          notify({
-            tone: "success",
-            title: "Spotify disconnected",
-            description: "You can reconnect instantly without fresh authorization.",
-          });
-        } else {
-          notify({
-            tone: "success",
-            title: requireFreshAuth ? "Spotify reset" : "Spotify disconnected",
-            description: requireFreshAuth
-              ? "Next Spotify connect will ask for fresh authorization."
-              : "You can reconnect Spotify anytime.",
-          });
-        }
+        notify({
+          tone: "success",
+          title: requireFreshAuth ? "Spotify reset" : "Spotify disconnected",
+          description: requireFreshAuth
+            ? "Next Spotify connect will ask for fresh authorization."
+            : "You can reconnect Spotify anytime.",
+        });
       } else if (disconnectTarget === "youtube") {
         setYoutubeSessionExpired(false);
         resetTransferSession();
-        if (!softOnly) {
-          setYoutubeAccountConnected(false);
-        }
+        setYoutubeAccountConnected(false);
         if (fromPlatform === "youtube") {
           setFromConnected(false);
           setPlaylists([]);
@@ -2267,9 +2298,9 @@ export default function TransferPage() {
         }
         notify({
           tone: "success",
-          title: "YouTube Music disconnected",
-          description: softOnly
-            ? "You can reconnect instantly without fresh authorization."
+          title: requireFreshAuth ? "YouTube Music reset" : "YouTube Music disconnected",
+          description: requireFreshAuth
+            ? "Next YouTube Music connect will ask for fresh authorization."
             : "You can reconnect YouTube Music anytime.",
         });
       }
@@ -2287,7 +2318,7 @@ export default function TransferPage() {
   }
 
   function handleYesDisconnect() {
-    void disconnectPlatformConnection({ requireFreshAuth: false, softOnly: true });
+    void disconnectPlatformConnection({ requireFreshAuth: false });
   }
 
   function handleResetConnection() {

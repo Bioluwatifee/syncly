@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, getClientIp, isSameOriginMutation } from "@/lib/security";
 import {
   clearPlatformSession,
+  clearSessionCookie,
   ensureSessionId,
   getPlatformSession,
   getSessionIdFromRequest,
@@ -456,11 +457,17 @@ function disconnectPlatform(request: NextRequest, platform: SupportedPlatform | 
     clearTokenCookies(response, request, "spotify");
     clearTokenCookies(response, request, "youtube");
     if (sessionId) clearPlatformSession(sessionId, "all");
+    clearSessionCookie(request, response);
     return response;
   }
 
   clearTokenCookies(response, request, platform);
   if (sessionId) clearPlatformSession(sessionId, platform);
+  // Also rotate the session id. clearPlatformSession only reaches the in-process
+  // Map of THIS instance; on serverless another instance can still hold tokens
+  // under the same session id and report "connected" on the next status check.
+  // The other platform (if still connected) keeps working from its own cookies.
+  clearSessionCookie(request, response);
   return response;
 }
 

@@ -42,6 +42,26 @@ export function ensureSessionId(request: NextRequest, response: NextResponse): s
   return created;
 }
 
+/**
+ * Drops the session-id cookie itself.
+ *
+ * `sessions` is an in-process Map, so on serverless it only ever holds entries
+ * for the instance that handled the OAuth callback. Clearing the platform entry
+ * on the instance that happens to serve the disconnect request is therefore not
+ * enough — another warm instance can still hold tokens under the same session
+ * id and report "connected". Rotating the session id orphans every such entry,
+ * so there is nothing left for a status check to restore from.
+ */
+export function clearSessionCookie(request: NextRequest, response: NextResponse) {
+  response.cookies.set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: isSecure(request),
+    maxAge: 0,
+  });
+}
+
 export function setPlatformSession(
   sessionId: string,
   platform: OAuthPlatform,
