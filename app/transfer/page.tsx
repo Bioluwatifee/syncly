@@ -2218,18 +2218,16 @@ export default function TransferPage() {
   }
 
   /**
-   * Fully disconnects a platform. ALWAYS calls the server so the stored access
-   * token, refresh token and server-side session entry are destroyed — a
-   * UI-only "soft" disconnect used to exist here and was the reason the app
-   * silently reconnected: the credentials survived, so the next status check
-   * found them and restored the session.
+   * Fully disconnects a platform — the single, strongest disconnect:
+   *   • server clears the access token, refresh token and server-side session
+   *   • server rotates the session id so no other instance can restore tokens
+   *   • local playlist/count caches are dropped
+   *   • the next Spotify connect is forced to re-show the consent dialog
    *
-   * `requireFreshAuth` only controls whether the NEXT connect forces the
-   * provider's consent dialog; it never affects whether credentials are cleared.
+   * This used to be split across a "Disconnect" (which did none of the above)
+   * and a "Reset connection" button. They are now one action.
    */
-  async function disconnectPlatformConnection({
-    requireFreshAuth = false,
-  }: { requireFreshAuth?: boolean } = {}) {
+  async function disconnectPlatformConnection() {
     if (!disconnectTarget || isDisconnecting) return;
 
     setIsDisconnecting(true);
@@ -2264,7 +2262,9 @@ export default function TransferPage() {
         playlistCountInFlightRef.current = false;
         setHasLoadedSpotifyPlaylists(false);
         setHasAttemptedSpotifyLoad(false);
-        if (requireFreshAuth && typeof window !== "undefined") {
+        // Always force the consent dialog on the next Spotify connect — this is
+        // the strongest behaviour and is now the only disconnect we offer.
+        if (typeof window !== "undefined") {
           try {
             window.localStorage.setItem(SPOTIFY_FORCE_FRESH_AUTH_KEY, "1");
           } catch {
@@ -2274,10 +2274,8 @@ export default function TransferPage() {
 
         notify({
           tone: "success",
-          title: requireFreshAuth ? "Spotify reset" : "Spotify disconnected",
-          description: requireFreshAuth
-            ? "Next Spotify connect will ask for fresh authorization."
-            : "You can reconnect Spotify anytime.",
+          title: "Spotify disconnected",
+          description: "Your Spotify credentials were cleared. Reconnecting will ask for authorization again.",
         });
       } else if (disconnectTarget === "youtube") {
         setYoutubeSessionExpired(false);
@@ -2298,10 +2296,8 @@ export default function TransferPage() {
         }
         notify({
           tone: "success",
-          title: requireFreshAuth ? "YouTube Music reset" : "YouTube Music disconnected",
-          description: requireFreshAuth
-            ? "Next YouTube Music connect will ask for fresh authorization."
-            : "You can reconnect YouTube Music anytime.",
+          title: "YouTube Music disconnected",
+          description: "Your YouTube Music credentials were cleared. You can reconnect anytime.",
         });
       }
     } catch (error) {
@@ -2317,12 +2313,8 @@ export default function TransferPage() {
     }
   }
 
-  function handleYesDisconnect() {
-    void disconnectPlatformConnection({ requireFreshAuth: false });
-  }
-
-  function handleResetConnection() {
-    void disconnectPlatformConnection({ requireFreshAuth: true });
+  function handleConfirmDisconnect() {
+    void disconnectPlatformConnection();
   }
 
   const cardPadding = isMobile ? "24px 16px 24px" : "36px 36px 32px";
@@ -2626,7 +2618,7 @@ export default function TransferPage() {
                 fontFamily: "'DM Sans', sans-serif",
               }}
             >
-              Disconnect keeps quick reconnect. Reset connection asks for fresh auth on next connect.
+              This clears your saved {disconnectPlatformLabel} credentials. Reconnecting will ask for authorization again.
             </p>
             <div
               style={{
@@ -2637,7 +2629,7 @@ export default function TransferPage() {
               }}
             >
               <button
-                onClick={handleYesDisconnect}
+                onClick={handleConfirmDisconnect}
                 disabled={isDisconnecting}
                 style={{
                   ...btnWhite,
@@ -2653,25 +2645,6 @@ export default function TransferPage() {
                 }}
               >
                 {isDisconnecting ? "Disconnecting..." : "Disconnect"}
-              </button>
-              <button
-                onClick={handleResetConnection}
-                disabled={isDisconnecting}
-                style={{
-                  ...btnWhite,
-                  flex: "0 0 auto",
-                  padding: isMobile ? "10px 14px" : "10px 20px",
-                  fontSize: isMobile ? 13 : 14,
-                  fontWeight: 500,
-                  whiteSpace: "nowrap",
-                  borderRadius: 8,
-                  background: "#e8c547",
-                  color: "#0a0a0b",
-                  opacity: isDisconnecting ? 0.7 : 1,
-                  cursor: isDisconnecting ? "not-allowed" : "pointer",
-                }}
-              >
-                {isDisconnecting ? "Resetting..." : "Reset connection"}
               </button>
             </div>
           </div>
