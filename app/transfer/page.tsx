@@ -11,9 +11,56 @@ const SPOTIFY_PLAYLIST_COUNT_CACHE_KEY = "syncly_spotify_playlist_count_cache_v2
 const YOUTUBE_PLAYLIST_COUNT_CACHE_KEY = "syncly_youtube_playlist_count_cache_v1";
 const SPOTIFY_FORCE_FRESH_AUTH_KEY = "syncly_force_spotify_fresh_auth_once";
 const PLAYLISTS_SESSION_CACHE_KEY = "syncly_playlists_session_cache_v1";
+const DIRECTION_SELECTION_KEY = "syncly_direction_selection_v1";
 const PLAYLIST_COUNT_CACHE_TTL_MS = 15 * 60 * 1000;
 const PLAYLIST_COUNT_MIN_GAP_MS = 1000;
 const PLAYLIST_COUNT_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** The two platforms a transfer can actually use. `Platform` also allows "apple", which is not transferable yet. */
+type TransferPlatform = "spotify" | "youtube";
+
+function isTransferPlatform(value: unknown): value is TransferPlatform {
+  return value === "spotify" || value === "youtube";
+}
+
+/**
+ * Reads the user's last From/To choice.
+ *
+ * Returns nulls for anything we cannot trust: storage unavailable, malformed
+ * JSON, a platform we cannot transfer (e.g. an "apple" written by a later
+ * build), or a from === to pair. Connection state is deliberately NOT stored —
+ * it lives in the server session and is reconciled from /api/auth on load.
+ */
+function readStoredDirection(): { from: TransferPlatform | null; to: TransferPlatform | null } {
+  if (typeof window === "undefined") return { from: null, to: null };
+  try {
+    const raw = window.localStorage.getItem(DIRECTION_SELECTION_KEY);
+    if (!raw) return { from: null, to: null };
+    const parsed = JSON.parse(raw) as { from?: unknown; to?: unknown };
+    const from = isTransferPlatform(parsed.from) ? parsed.from : null;
+    const to = isTransferPlatform(parsed.to) ? parsed.to : null;
+    // Source and destination must differ; drop the destination if they collide.
+    if (from && to && from === to) return { from, to: null };
+    return { from, to };
+  } catch {
+    return { from: null, to: null };
+  }
+}
+
+function writeStoredDirection(from: Platform | null, to: Platform | null) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      DIRECTION_SELECTION_KEY,
+      JSON.stringify({
+        from: isTransferPlatform(from) ? from : null,
+        to: isTransferPlatform(to) ? to : null,
+      })
+    );
+  } catch {
+    // ignore — localStorage may be unavailable
+  }
+}
 
 interface TrackResult {
   id: string;
@@ -806,6 +853,9 @@ export default function TransferPage() {
   // of dumping the user back to the playlist list with no summary.
   const [isCancellingTransfer, setIsCancellingTransfer] = useState(false);
   const [hostReady, setHostReady] = useState(true);
+  // Flips true once the stored From/To choice has been read back into state.
+  // Connection-based defaulting waits on it so it cannot pre-empt the user's choice.
+  const [directionRestored, setDirectionRestored] = useState(false);
   const [isPreparingTransfer, setIsPreparingTransfer] = useState(false);
   const [playlistCountLoadingId, setPlaylistCountLoadingId] = useState<string | null>(null);
   const [playlistCountCooldownUntil, setPlaylistCountCooldownUntil] = useState(0);
@@ -1125,8 +1175,47 @@ export default function TransferPage() {
     }
   }, [refreshAuthStatus]);
 
+  // Restore the user's last From/To choice before any connection-based defaulting
+  // runs. Without this a refresh dropped the selection and the hydration pass
+  // below re-defaulted the source to Spotify, silently flipping a
+  // YouTube -> Spotify direction back to Spotify -> YouTube.
+  //
+  // This restores into state rather than a useState initializer because the page
+  // is server-rendered: reading localStorage during the first render would make
+  // the client's markup disagree with the server's.
   useEffect(() => {
     if (!hostReady) return;
+    if (directionRestored) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const fromParam = params.get("from");
+    const stored = readStoredDirection();
+
+    // A `from` in the URL means we just came back from OAuth for that source,
+    // so it outranks whatever was stored.
+    const restoredFrom = isTransferPlatform(fromParam) ? fromParam : stored.from;
+    const restoredTo = stored.to === restoredFrom ? null : stored.to;
+
+    if (restoredFrom) setFromPlatform(restoredFrom);
+    if (restoredTo) setToPlatform(restoredTo);
+    // Batched with the setters above, so the hydration effect's next run already
+    // sees the restored platforms.
+    setDirectionRestored(true);
+  }, [directionRestored, hostReady]);
+
+  // Persist every direction change from one place, so selecting, swapping and
+  // OAuth returns are all covered. Gated on the restore pass so the initial
+  // nulls can never overwrite a stored selection.
+  useEffect(() => {
+    if (!hostReady || !directionRestored) return;
+    writeStoredDirection(fromPlatform, toPlatform);
+  }, [directionRestored, fromPlatform, hostReady, toPlatform]);
+
+  useEffect(() => {
+    if (!hostReady) return;
+    // Wait for the restored selection; otherwise this pass sees a null source
+    // and defaults it to Spotify.
+    if (!directionRestored) return;
 
     let mounted = true;
 
@@ -1243,6 +1332,9 @@ export default function TransferPage() {
         }
 
         if (!fromPlatform) {
+          // Only reached when the user has no restored choice — a stored source is
+          // left alone here even if it is disconnected, so their direction is never
+          // flipped behind their back (the disconnected side just shows "Connect").
           // Product direction is Spotify -> YouTube first.
           // Never auto-default source to YouTube; either default to Spotify or stay unset.
           if (spotifyConnected && toPlatform !== "spotify") {
@@ -1297,6 +1389,7 @@ export default function TransferPage() {
       mounted = false;
     };
   }, [
+    directionRestored,
     fromPlatform,
     hasLoadedSpotifyPlaylists,
     hostReady,
@@ -2632,7 +2725,7 @@ export default function TransferPage() {
                 onClick={handleConfirmDisconnect}
                 disabled={isDisconnecting}
                 style={{
-                  ...btnWhite,
+                  ...btnYellow,
                   flex: "0 0 auto",
                   padding: isMobile ? "10px 14px" : "10px 20px",
                   fontSize: isMobile ? 13 : 14,
