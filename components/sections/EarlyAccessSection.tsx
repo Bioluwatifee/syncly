@@ -19,7 +19,7 @@ export default function EarlyAccessSection() {
         </div>
 
         {/* Headline */}
-        <h2 className="ea-title" style={{ fontFamily: "'Aleo', serif", fontSize: "clamp(38px, 5vw, 66px)", fontWeight: 700, letterSpacing: -2, lineHeight: 1.05, marginBottom: 20, position: "relative" }}>
+        <h2 className="ea-title" style={{ fontFamily: "'Aleo', serif", fontSize: "clamp(30px, 3.6vw, 48px)", fontWeight: 700, letterSpacing: -1.2, lineHeight: 1.1, marginBottom: 20, position: "relative" }}>
           Move your playlists between<br />
           <em style={{ fontStyle: "italic", color: "var(--accent)" }}>Spotify and YouTube Music.</em>
         </h2>
