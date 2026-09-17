@@ -111,7 +111,7 @@ export default function Navbar() {
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1.04)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 0 30px rgba(232,197,71,0.35)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
         >
-          Get Early Access
+          Try Syncly
         </a>
 
         {/* Hamburger — mobile only */}
@@ -226,7 +226,7 @@ export default function Navbar() {
               width: "100%", textAlign: "center",
             }}
           >
-            Get Early Access
+            Try Syncly
           </a>
         </nav>
       </div>

@@ -15,18 +15,18 @@ export default function EarlyAccessSection() {
         {/* Tag */}
         <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(232,197,71,0.07)", border: "1px solid rgba(232,197,71,0.2)", borderRadius: 100, padding: "6px 16px", fontSize: 11, fontWeight: 500, color: "var(--accent)", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: 28, position: "relative" }}>
           <div style={{ width: 6, height: 6, background: "var(--accent)", borderRadius: "50%", animation: "pulse 2s ease-in-out infinite" }} />
-          Coming Soon
+          Early Access
         </div>
 
         {/* Headline */}
         <h2 className="ea-title" style={{ fontFamily: "'Aleo', serif", fontSize: "clamp(38px, 5vw, 66px)", fontWeight: 700, letterSpacing: -2, lineHeight: 1.05, marginBottom: 20, position: "relative" }}>
-          Be the first to know<br />
-          <em style={{ fontStyle: "italic", color: "var(--accent)" }}>when we launch.</em>
+          Move your playlists between<br />
+          <em style={{ fontStyle: "italic", color: "var(--accent)" }}>Spotify and YouTube Music.</em>
         </h2>
 
         {/* Sub */}
         <p className="ea-sub" style={{ color: "var(--muted)", fontSize: 16, lineHeight: 1.7, maxWidth: 420, margin: "0 auto 44px", position: "relative", fontWeight: 300 }}>
-          We&apos;re putting the final touches on Syncly. Drop your details and you&apos;ll be first in line — no spam, just the launch email.
+          Currently onboarding a small number of early users. Leave your email and we&apos;ll get you set up.
         </p>
 
         {/* CTA */}
@@ -46,7 +46,7 @@ export default function EarlyAccessSection() {
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-3px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 20px 50px rgba(232,197,71,0.3)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
         >
-          Get Early Access
+          Try Syncly
         </a>
       </div>
     </section>

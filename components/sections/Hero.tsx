@@ -80,7 +80,7 @@ export default function Hero() {
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 16px 40px rgba(232,197,71,0.3)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}
         >
-          Get Early Access
+          Try Syncly
         </a>
         <button
           onClick={() => document.getElementById("how")?.scrollIntoView({ behavior: "smooth" })}
