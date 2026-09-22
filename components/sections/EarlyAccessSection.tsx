@@ -31,8 +31,8 @@ export default function EarlyAccessSection() {
 
         {/* CTA */}
         <a
-          href="https://tally.so/r/442xBY"
-          target="_blank"
+          href="/transfer"
+          target="_self"
           rel="noopener noreferrer"
           className="ea-btn"
           style={{

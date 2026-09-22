@@ -95,8 +95,8 @@ export default function Navbar() {
 
         {/* Desktop CTA */}
         <a
-          href="https://tally.so/r/442xBY"
-          target="_blank"
+          href="/transfer"
+          target="_self"
           rel="noopener noreferrer"
           className="nav-cta-desktop"
           style={{
@@ -210,8 +210,8 @@ export default function Navbar() {
           ))}
 
           <a
-            href="https://tally.so/r/442xBY"
-            target="_blank"
+            href="/transfer"
+            target="_self"
             rel="noopener noreferrer"
             onClick={closeMenu}
             style={{

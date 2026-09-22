@@ -66,8 +66,8 @@ export default function Hero() {
       {/* Actions */}
       <div className="hero-actions" style={{ display: "flex", gap: 16, alignItems: "center", animation: "fadeUp 0.8s 0.3s ease both" }}>
         <a
-          href="https://tally.so/r/442xBY"
-          target="_blank"
+          href="/transfer"
+          target="_self"
           rel="noopener noreferrer"
           className="btn-primary"
           style={{
